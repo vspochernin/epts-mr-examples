@@ -1,0 +1,47 @@
+diff --git a/src/main/java/epts/data/entity/epts/GenericEpts.java b/src/main/java/epts/data/entity/epts/GenericEpts.java
+index 352fafce701c66a715abda32b15f15f4f91baae7..43d434e81e004bb3b830a284b53631740ba5dff2 100644
+--- a/src/main/java/epts/data/entity/epts/GenericEpts.java
++++ b/src/main/java/epts/data/entity/epts/GenericEpts.java
+@@ -46,6 +46,9 @@ public class GenericEpts {
+     @JoinColumn(name = "automotive_epts_id")
+     private AutomotiveEpts automotiveEpts;
+ 
++    @Column(columnDefinition = "text")
++    private String status;
++
+     @Override
+     public boolean equals(Object o) {
+         if (this == o) return true;
+diff --git a/src/main/java/epts/ui/utils/gridcreators/CarGridCreator.java b/src/main/java/epts/ui/utils/gridcreators/CarGridCreator.java
+index 7b34ebfbd4565c4ea30bf2e893406191eb603829..15dbe2e515a91b922c94bfc14372d26a88d0c672 100644
+--- a/src/main/java/epts/ui/utils/gridcreators/CarGridCreator.java
++++ b/src/main/java/epts/ui/utils/gridcreators/CarGridCreator.java
+@@ -9,7 +9,7 @@ import java.util.Locale;
+ public class CarGridCreator extends GridCreator<Car> {
+     @Override
+     public EnhancedGrid<Car> createGrid() {
+-        
++
+ 
+         grid = new EnhancedGrid<>();
+ 
+@@ -17,10 +17,17 @@ public class CarGridCreator extends GridCreator<Car> {
+                 .setHeader(grid.getTranslation("id"), new TextFilterField())
+                 .setKey("id").setValueProvider(car -> String.valueOf(car.getId()));
+ 
+-        grid.addColumn(car -> car.getEpts() != null ? "Выпущен" : "Отсутствует")
++        grid.addColumn(car -> {
++                    String value = "Отсутствует";
++                    if (car.getEpts() != null && car.getEpts().getGenericEpts() != null &&
++                            car.getEpts().getGenericEpts().getStatus() != null) {
++                        value = car.getEpts().getGenericEpts().getStatus();
++                    }
++                    return value;
++                })
+                 .setHeader(grid.getTranslation("statusEp"), new TextFilterField())
+                 .setKey("statusEp").setResizable(true);
+-        
++
+         grid.addColumn(Car::getAutomaker)
+                 .setHeader(grid.getTranslation("automaker"), new TextFilterField())
+                 .setKey("automaker")

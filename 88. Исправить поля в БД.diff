@@ -1,0 +1,206 @@
+diff --git a/src/main/java/epts/data/entity/epts/AutomotiveEpts.java b/src/main/java/epts/data/entity/epts/AutomotiveEpts.java
+index 7896ee2bcf036f0023210baaf51515ab6196a7f8..203d5be988f85b91a579f6ca7b2f88feecd95c9c 100644
+--- a/src/main/java/epts/data/entity/epts/AutomotiveEpts.java
++++ b/src/main/java/epts/data/entity/epts/AutomotiveEpts.java
+@@ -27,31 +27,18 @@ public class AutomotiveEpts {
+     @OneToOne(mappedBy = "automotiveEpts")
+     GenericEpts genericEpts;
+ 
+-    @ManyToOne(fetch = FetchType.LAZY)
+-    @JoinColumn(name = "epts_template_id")
+-    private Template eptsTemplate;
+-
+-    @Column(columnDefinition = "text")
+-    private String eptsXml;
+-    private int createRequestId;
+-    private int pollRequestId;
+-
+     @Override
+     public boolean equals(Object o) {
+         if (this == o) return true;
+         if (o == null || getClass() != o.getClass()) return false;
+         AutomotiveEpts that = (AutomotiveEpts) o;
+-        return createRequestId == that.createRequestId
+-                && pollRequestId == that.pollRequestId
+-                && Objects.equals(id, that.id)
++        return Objects.equals(id, that.id)
+                 && Objects.equals(automotive, that.automotive)
+-                && Objects.equals(genericEpts, that.genericEpts)
+-                && Objects.equals(eptsTemplate, that.eptsTemplate)
+-                && Objects.equals(eptsXml, that.eptsXml);
++                && Objects.equals(genericEpts, that.genericEpts);
+     }
+ 
+     @Override
+     public int hashCode() {
+-        return Objects.hash(id, automotive, genericEpts, eptsTemplate, eptsXml, createRequestId, pollRequestId);
++        return Objects.hash(id, automotive, genericEpts);
+     }
+ }
+diff --git a/src/main/java/epts/data/entity/epts/CarEpts.java b/src/main/java/epts/data/entity/epts/CarEpts.java
+index e7ea5aa5566917918293a4ee5711ff0333ec87c2..d9d5588f81ac7b81b46f693c65bc304d038a795c 100644
+--- a/src/main/java/epts/data/entity/epts/CarEpts.java
++++ b/src/main/java/epts/data/entity/epts/CarEpts.java
+@@ -27,17 +27,6 @@ public class CarEpts {
+     @OneToOne(mappedBy = "carEpts")
+     GenericEpts genericEpts;
+ 
+-    @ManyToOne(fetch = FetchType.LAZY)
+-    @JoinColumn(name = "epts_template_id")
+-    private Template eptsTemplate;
+-
+-    @Column(columnDefinition = "text")
+-    @Getter
+-    private String eptsXml;
+-    @Setter
+-    private Long createRequestId;
+-    private Long pollRequestId;
+-
+     @Override
+     public boolean equals(Object o) {
+         if (this == o) return true;
+@@ -45,15 +34,11 @@ public class CarEpts {
+         CarEpts carEpts = (CarEpts) o;
+         return Objects.equals(id, carEpts.id)
+                 && Objects.equals(car, carEpts.car)
+-                && Objects.equals(genericEpts, carEpts.genericEpts)
+-                && Objects.equals(eptsTemplate, carEpts.eptsTemplate)
+-                && Objects.equals(eptsXml, carEpts.eptsXml)
+-                && Objects.equals(createRequestId, carEpts.createRequestId)
+-                && Objects.equals(pollRequestId, carEpts.pollRequestId);
++                && Objects.equals(genericEpts, carEpts.genericEpts);
+     }
+ 
+     @Override
+     public int hashCode() {
+-        return Objects.hash(id, car, genericEpts, eptsTemplate, eptsXml, createRequestId, pollRequestId);
++        return Objects.hash(id, car, genericEpts);
+     }
+ }
+diff --git a/src/main/java/epts/data/entity/epts/GenericEpts.java b/src/main/java/epts/data/entity/epts/GenericEpts.java
+index 43d434e81e004bb3b830a284b53631740ba5dff2..4123e2a730c4527949123586b55ddd322ea57f2c 100644
+--- a/src/main/java/epts/data/entity/epts/GenericEpts.java
++++ b/src/main/java/epts/data/entity/epts/GenericEpts.java
+@@ -49,6 +49,13 @@ public class GenericEpts {
+     @Column(columnDefinition = "text")
+     private String status;
+ 
++    @Column(columnDefinition = "text")
++    @Getter
++    private String eptsXml;
++    @Setter
++    private Long createRequestId;
++    private Long pollRequestId;
++
+     @Override
+     public boolean equals(Object o) {
+         if (this == o) return true;
+diff --git a/src/main/java/epts/data/entity/epts/TrailerEpts.java b/src/main/java/epts/data/entity/epts/TrailerEpts.java
+index cf8356bb948234a2a97eec3abcca7c2c94201f71..ae1c99d3ad4f0162356b450cc0205798e04478f6 100644
+--- a/src/main/java/epts/data/entity/epts/TrailerEpts.java
++++ b/src/main/java/epts/data/entity/epts/TrailerEpts.java
+@@ -26,31 +26,18 @@ public class TrailerEpts {
+     @OneToOne(mappedBy = "trailerEpts")
+     GenericEpts genericEpts;
+ 
+-    @ManyToOne(fetch = FetchType.LAZY)
+-    @JoinColumn(name = "epts_template_id")
+-    private Template eptsTemplate;
+-
+-    @Column(columnDefinition = "text")
+-    private String eptsXml;
+-    private int createRequestId;
+-    private int pollRequestId;
+-
+     @Override
+     public boolean equals(Object o) {
+         if (this == o) return true;
+         if (o == null || getClass() != o.getClass()) return false;
+         TrailerEpts that = (TrailerEpts) o;
+-        return createRequestId == that.createRequestId
+-                && pollRequestId == that.pollRequestId
+-                && Objects.equals(id, that.id)
++        return Objects.equals(id, that.id)
+                 && Objects.equals(trailer, that.trailer)
+-                && Objects.equals(genericEpts, that.genericEpts)
+-                && Objects.equals(eptsTemplate, that.eptsTemplate)
+-                && Objects.equals(eptsXml, that.eptsXml);
++                && Objects.equals(genericEpts, that.genericEpts);
+     }
+ 
+     @Override
+     public int hashCode() {
+-        return Objects.hash(id, trailer, genericEpts, eptsTemplate, eptsXml, createRequestId, pollRequestId);
++        return Objects.hash(id, trailer, genericEpts);
+     }
+ }
+diff --git a/src/main/java/epts/data/entity/epts/TruckEpts.java b/src/main/java/epts/data/entity/epts/TruckEpts.java
+index d922540dd8b6cfbd0819205e434f90f5b552e8f4..b3724e9f86f1077eabb8a9623e05c9eb4a5f13da 100644
+--- a/src/main/java/epts/data/entity/epts/TruckEpts.java
++++ b/src/main/java/epts/data/entity/epts/TruckEpts.java
+@@ -27,31 +27,18 @@ public class TruckEpts {
+     @OneToOne(mappedBy = "truckEpts")
+     GenericEpts genericEpts;
+ 
+-    @ManyToOne(fetch = FetchType.LAZY)
+-    @JoinColumn(name = "epts_template_id")
+-    private Template eptsTemplate;
+-
+-    @Column(columnDefinition = "text")
+-    private String eptsXml;
+-    private int createRequestId;
+-    private int pollRequestId;
+-
+     @Override
+     public boolean equals(Object o) {
+         if (this == o) return true;
+         if (o == null || getClass() != o.getClass()) return false;
+         TruckEpts truckEpts = (TruckEpts) o;
+-        return createRequestId == truckEpts.createRequestId
+-                && pollRequestId == truckEpts.pollRequestId
+-                && Objects.equals(id, truckEpts.id)
++        return Objects.equals(id, truckEpts.id)
+                 && Objects.equals(truck, truckEpts.truck)
+-                && Objects.equals(genericEpts, truckEpts.genericEpts)
+-                && Objects.equals(eptsTemplate, truckEpts.eptsTemplate)
+-                && Objects.equals(eptsXml, truckEpts.eptsXml);
++                && Objects.equals(genericEpts, truckEpts.genericEpts);
+     }
+ 
+     @Override
+     public int hashCode() {
+-        return Objects.hash(id, truck, genericEpts, eptsTemplate, eptsXml, createRequestId, pollRequestId);
++        return Objects.hash(id, truck, genericEpts);
+     }
+ }
+diff --git a/src/main/java/epts/data/service/api/ElptsService.java b/src/main/java/epts/data/service/api/ElptsService.java
+index f62975b7614ec2bae7e4ee1607e65b16a123d77e..c06f6695879b8ec3304c7affba3a1f1517a9bd1e 100644
+--- a/src/main/java/epts/data/service/api/ElptsService.java
++++ b/src/main/java/epts/data/service/api/ElptsService.java
+@@ -62,7 +62,7 @@ public class ElptsService {
+         Request request = new Request();
+ 
+         try {
+-            signedXml = new SignatureService().parseWholeSignature(epts.getCarEpts().getEptsXml(), "*secret*");
++            signedXml = new SignatureService().parseWholeSignature(epts.getEptsXml(), "*secret*");
+         } catch (Exception e) {
+             e.printStackTrace();
+             return null;
+@@ -97,7 +97,7 @@ public class ElptsService {
+             repository.save(request);
+ 
+             CarEpts carEpts = new CarEpts();
+-            carEpts.setCreateRequestId(request.getId());
++            epts.setCreateRequestId(request.getId());
+             carEptsRepository.save(carEpts);
+             epts.setCarEpts(carEpts);
+             eptsRepository.save(epts);
+@@ -248,7 +248,7 @@ public class ElptsService {
+ 
+                 GenericEpts genericEpts = new GenericEpts();
+                 CarEpts epts = pollRequest.getGenericEpts().getCarEpts();
+-                epts.setCreateRequestId(pollRequest.getId());
++                genericEpts.setPollRequestId(pollRequest.getId());
+                 genericEpts.setCarEpts(epts);
+                 pollRequest.setGenericEpts(genericEpts);
+                 eptsRepository.save(pollRequest.getGenericEpts());

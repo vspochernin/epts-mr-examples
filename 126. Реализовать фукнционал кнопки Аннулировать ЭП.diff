@@ -1,0 +1,1307 @@
+diff --git a/src/main/java/epts/data/entity/Request.java b/src/main/java/epts/data/entity/Request.java
+index dfdf9f21ed1167e31b4ee1e16f98f66ab2b79463..04ac922e6663a6b286077a3c8493bd3530ce8eb4 100644
+--- a/src/main/java/epts/data/entity/Request.java
++++ b/src/main/java/epts/data/entity/Request.java
+@@ -83,6 +83,10 @@ public class Request {
+             if (passportNode != null) {
+                 return "Паспорт: " + XmlHandler.getPassportInfo(passportNode);
+             }
++            Node revocationNode = (Node) xPath.compile("//*[contains(name(),'doc:StatementStatus')]").evaluate(document, XPathConstants.NODE);
++            if (revocationNode != null) {
++                return "Статус рассмотрения заявления об аннулировании: " + revocationNode.getTextContent();
++            }
+         } catch (XPathExpressionException e) {
+             e.printStackTrace();
+         }
+diff --git a/src/main/java/epts/data/entity/transport/Car.java b/src/main/java/epts/data/entity/transport/Car.java
+index be3bae27c2cc267aefd76154e6f9d8b2c6b7b3b7..8f554e1d702a690bf4fd36612891942558c2da57 100644
+--- a/src/main/java/epts/data/entity/transport/Car.java
++++ b/src/main/java/epts/data/entity/transport/Car.java
+@@ -28,6 +28,8 @@ public class Car {
+     @OneToOne(mappedBy = "car", cascade = CascadeType.REMOVE)
+     GenericVehicle genericVehicle;
+ 
++    @Column(columnDefinition = "text")
++    private String passportNumber;
+     @Column(columnDefinition = "text")
+     private String automaker;
+     @Column(columnDefinition = "text")
+diff --git a/src/main/java/epts/data/service/api/ElptsService.java b/src/main/java/epts/data/service/api/ElptsService.java
+index f3d570454adb256ae569e7402b7d5957cfd519ef..f6c876243bd8873b7da86cff270b125cb7626bf1 100644
+--- a/src/main/java/epts/data/service/api/ElptsService.java
++++ b/src/main/java/epts/data/service/api/ElptsService.java
+@@ -6,6 +6,9 @@ import epts.data.entity.transport.Car;
+ import epts.data.repositories.GenericEptsRepository;
+ import epts.data.repositories.RequestRepository;
+ import epts.data.service.epts.GenericEptsService;
++import epts.data.service.merger.builder.RevocationBuilder;
++import epts.ui.utils.XmlHandler;
++import jakarta.xml.bind.JAXBException;
+ import org.apache.http.HttpHeaders;
+ import org.apache.http.HttpResponse;
+ import org.apache.http.client.config.RequestConfig;
+@@ -26,6 +29,7 @@ import javax.ws.rs.core.MediaType;
+ import javax.xml.parsers.DocumentBuilder;
+ import javax.xml.parsers.DocumentBuilderFactory;
+ import javax.xml.parsers.ParserConfigurationException;
++import javax.xml.transform.TransformerException;
+ import javax.xml.xpath.XPath;
+ import javax.xml.xpath.XPathConstants;
+ import javax.xml.xpath.XPathExpressionException;
+@@ -34,6 +38,8 @@ import java.io.ByteArrayInputStream;
+ import java.io.IOException;
+ import java.net.URI;
+ import java.nio.charset.StandardCharsets;
++import java.nio.file.Files;
++import java.nio.file.Path;
+ import java.sql.Timestamp;
+ import java.util.HashMap;
+ import java.util.UUID;
+@@ -57,15 +63,13 @@ public class ElptsService {
+         this.genericEptsService = genericEptsService;
+     }
+ 
+-    public void sendXml(long id) {
++    public void sendXml(long id, String xml, String requestType) {
+         GenericEpts genericEpts = genericEptsRepository.findById(id).orElseThrow();
+-        String signedXml;
+-
+         Request request = new Request();
+ 
++        String signedXml;
+         try {
+-            signedXml = new SignatureService()
+-                    .parseWholeSignature(genericEpts.getEptsXml(), "RUOWNER000085");
++            signedXml = new SignatureService().parseWholeSignature(xml, "RUOWNER000085");
+         } catch (Exception e) {
+             e.printStackTrace();
+             throw new RuntimeException("Parse signature exception");
+@@ -74,13 +78,13 @@ public class ElptsService {
+         request.setId(-1L);
+         request.setGenericEpts(genericEpts);
+         request.setRequestOn(new Timestamp(System.currentTimeMillis()));
+-        request.setRequestType("eptsAddData");
++        request.setRequestType(requestType);
+         request.setStatus("signed");
+         request.setRequestXml(signedXml);
+ 
+         String xmlResponse = getXmlResponse(sandboxUri, signedXml);
+-        Document document;
+ 
++        Document document;
+         try {
+             document = getDocument(xmlResponse);
+         } catch (ParserConfigurationException | IOException | SAXException e) {
+@@ -89,20 +93,22 @@ public class ElptsService {
+         }
+ 
+         XPath xPath = XPathFactory.newInstance().newXPath();
+-
+         try {
++            // Парсинг номера очереди из полученной xml.
+             Node queueNode = (Node) xPath.compile("//*[contains(local-name(),'QueueID')]").evaluate(document, XPathConstants.NODE);
+             String queueUuid = queueNode.getTextContent();
++
++            // Установка номера очереди в запись запроса.
+             request.setQueueUuid(UUID.fromString(queueUuid));
+             request.setResponseXml(xmlResponse);
+             Request savedRequest = requestRepository.save(request);
+ 
++            // Установка id и статуса запроса в обрабатываемый genericEpts.
+             genericEpts.setCreateRequestId(savedRequest.getId());
+             genericEpts.setStatus("Запрошен");
+             genericEptsRepository.save(genericEpts);
+-
+         } catch (XPathExpressionException e) {
+-
++            // Запись ошибок.
+             NodeList errorNodes;
+             try {
+                 errorNodes = (NodeList) xPath.compile("//*[contains(local-name(),'ErrorData')]").evaluate(document, XPathConstants.NODESET);
+@@ -110,20 +116,20 @@ public class ElptsService {
+                 request.setStatus(ex.toString());
+                 throw new RuntimeException("No QueueID");
+             }
+-
+             if (errorNodes.getLength() == 0) {
+                 request.setStatus("No queueID, no errors");
+                 requestRepository.save(request);
+                 throw new RuntimeException("No queueID, no errors");
+             }
+ 
+-            request.setStatus(getErrorString(errorNodes).toString());
++            // Установка ошибок и ответа сервера в запись запроса.
++            request.setStatus(XmlHandler.getErrorString(errorNodes).toString());
+             request.setResponseXml(xmlResponse);
+             requestRepository.save(request);
+         }
+     }
+ 
+-    public Request sendPoll(long id) {
++    public Request sendPoll(long id, String requestType) {
+         Request request = requestRepository.findById(id).orElseThrow();
+ 
+         if (request.getQueueUuid() == null) {
+@@ -133,33 +139,13 @@ public class ElptsService {
+             requestRepository.save(request);
+ 
+             return request;
+-
+         } else {
+-            String requestString = "*secret*";
++            String requestString = "";
++            if (requestType.equals("eptsAddData")) {
++                requestString = getPollXml("src/main/resources/release_poll_1.xml", "src/main/resources/release_poll_2.xml", request);
++            } else if (requestType.equals("eptsRevocation")) {
++                requestString = getPollXml("src/main/resources/annul_poll_1.xml", "src/main/resources/annul_poll_2.xml", request);
++            }
+ 
+             String signedXml;
+ 
+@@ -200,7 +186,13 @@ public class ElptsService {
+             try {
+                 NodeList errorNodes = (NodeList) xPath.compile("//*[contains(local-name(),'ErrorData')]").evaluate(document, XPathConstants.NODESET);
+                 if (errorNodes.getLength() == 0) {
+-                    Node passportNode = (Node) xPath.compile("//*[contains(name(),'doc:passportResponse')]")
++                    String expression = "";
++                    if (requestType.equals("eptsAddData")) {
++                        expression = "//*[contains(name(),'doc:passportResponse')]";
++                    } else if (requestType.equals("eptsRevocation")) {
++                        expression = "//*[contains(name(),'doc:ELPTSRevocationResponse')]";
++                    }
++                    Node passportNode = (Node) xPath.compile(expression)
+                             .evaluate(document, XPathConstants.NODE);
+ 
+                     StringBuilder message = new StringBuilder();
+@@ -211,7 +203,7 @@ public class ElptsService {
+                     pollRequest.setStatus(message.toString());
+ 
+                 } else {
+-                    pollRequest.setStatus(getErrorString(errorNodes).toString());
++                    pollRequest.setStatus(XmlHandler.getErrorString(errorNodes).toString());
+                 }
+ 
+                 Request savedPollRequest = requestRepository.save(pollRequest);
+@@ -229,7 +221,36 @@ public class ElptsService {
+                 return request;
+             }
+ 
++
++        }
++    }
++
++    public void sendReleaseXml(long id) {
++        GenericEpts genericEpts = genericEptsRepository.findById(id).orElseThrow();
++
++        sendXml(id, genericEpts.getEptsXml(), "eptsAddData");
++    }
++
++    public Request sendReleasePoll(long id) {
++        return sendPoll(id, "eptsAddData");
++    }
++
++    public void sendAnnulXml(long id, Car car, String reason) {
++        // TODO: (extra variable "car").
++        // Получение xml для аннулирования.
++        RevocationBuilder revocationBuilder = new RevocationBuilder();
++        String xml = "";
++        try {
++            xml = revocationBuilder.buildRevocation(car, reason);
++        } catch (JAXBException | ParserConfigurationException | SAXException | IOException | TransformerException e) {
++            e.printStackTrace();
+         }
++
++        sendXml(id, xml, "eptsRevocation");
++    }
++
++    public void sendAnnulPoll(long id) {
++        sendPoll(id, "eptsRevocation");
+     }
+ 
+ 
+@@ -245,9 +266,8 @@ public class ElptsService {
+                 .setConnectTimeout(timeout * 10000)
+                 .setConnectionRequestTimeout(timeout * 10000)
+                 .setSocketTimeout(timeout * 10000).build();
+-       CloseableHttpClient client = HttpClientBuilder.create().setDefaultRequestConfig(config).build();
+ 
+-        try {
++        try (CloseableHttpClient client = HttpClientBuilder.create().setDefaultRequestConfig(config).build()) {
+             StringEntity entity = new StringEntity(signedXml, StandardCharsets.UTF_8);
+             HttpPost httpPost = new HttpPost(serviceUri);
+             httpPost.setEntity(entity);
+@@ -261,36 +281,10 @@ public class ElptsService {
+         }
+     }
+ 
+-    private StringBuilder getErrorString(NodeList errorNodes) {
+-        StringBuilder errorString = new StringBuilder();
+-        for (int i = 0; i < errorNodes.getLength(); i++) {
+-
+-            Node node = errorNodes.item(i);
+-            NodeList childNodes = node.getChildNodes();
+-            HashMap<String, String> errorMap = new HashMap<>();
+-
+-            for (int j = 0; j < childNodes.getLength(); j++) {
+-                Node childNode = childNodes.item(j);
+-
+-                if (childNode.getLocalName() != null) {
+-                    errorMap.put(childNode.getLocalName(), childNode.getTextContent());
+-                }
+-            }
+-
+-            errorString.append(errorMap.get("ErrorCode" + "; " + errorMap.get("ErrorText")));
+-
+-            if (errorMap.get("ErrorDetails") != null) {
+-                errorString.append("; ").append(errorMap.get("ErrorDetails"));
+-            }
+-        }
+-
+-        return errorString;
+-    }
+-
+     public void sendXmlRequest(Car car) {
+         GenericEpts genericEpts = car.getEpts().getGenericEpts();
+         long genericEptsId = genericEpts.getId();
+-        sendXml(genericEptsId);
++        sendReleaseXml(genericEptsId);
+     }
+ 
+     public Request sendPollRequest(Car car) {
+@@ -301,7 +295,7 @@ public class ElptsService {
+         }
+         genericEpts.setCreateRequestId(createRequestId);
+         genericEptsService.update(genericEpts);
+-        return sendPoll(createRequestId);
++        return sendReleasePoll(createRequestId);
+     }
+ 
+     public void updateRequestStatus(Request request, GenericEpts genericEpts) {
+@@ -313,4 +307,16 @@ public class ElptsService {
+         }
+         genericEptsService.update(genericEpts);
+     }
++
++    public String getPollXml(String path1, String path2, Request request) {
++        String part1;
++        String part2;
++        try {
++            part1 = Files.readString(Path.of(path1));
++            part2 = Files.readString(Path.of(path2));
++        } catch (IOException e) {
++            throw new RuntimeException(e);
++        }
++        return part1 + request.getQueueUuid().toString() + part2;
++    }
+ }
+\ No newline at end of file
+diff --git a/src/main/java/epts/data/service/merger/XmlMerger.java b/src/main/java/epts/data/service/merger/XmlMerger.java
+index c17be523e2149c9f13453da1fd5e68a79ec1075a..a86e924ec2afac8cdf1ef903412b8e3483f7a622 100644
+--- a/src/main/java/epts/data/service/merger/XmlMerger.java
++++ b/src/main/java/epts/data/service/merger/XmlMerger.java
+@@ -30,7 +30,7 @@ public class XmlMerger {
+         doc.getDocumentElement().normalize();
+ 
+         NodeList nodesToInsert = additionalDoc.getElementsByTagName(tagName).item(0).getChildNodes();
+-        NodeList whereToInsert = doc.getElementsByTagName("doc:VehicleEPassportDetails");
++        NodeList whereToInsert = doc.getElementsByTagName("doc:ELPTSRevocationRequest");
+ 
+         for (int i = 0; i < nodesToInsert.getLength(); i++) {
+             Node importedNode = doc.importNode(nodesToInsert.item(i), true);
+diff --git a/src/main/java/epts/data/service/merger/annul_beans/ELPTSRevocationRequest.java b/src/main/java/epts/data/service/merger/annul_beans/ELPTSRevocationRequest.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..6601f0a1a6180f9a176bb9f373e5a49ba2b100b2
+--- /dev/null
++++ b/src/main/java/epts/data/service/merger/annul_beans/ELPTSRevocationRequest.java
+@@ -0,0 +1,19 @@
++package epts.data.service.merger.annul_beans;
++
++import jakarta.xml.bind.annotation.*;
++import lombok.Getter;
++import lombok.Setter;
++
++@XmlAccessorOrder
++@XmlAccessorType(XmlAccessType.FIELD)
++@Setter
++@Getter
++@XmlRootElement(name = "ELPTSRevocationRequest", namespace = XmlAnnulNamespaces.doc)
++public class ELPTSRevocationRequest {
++    @XmlElement(namespace = XmlAnnulNamespaces.trsdo, name = "VehicleEPassportKindCode")
++    private int vehicleEPassportKindCode;
++    @XmlElement(namespace = XmlAnnulNamespaces.trsdo, name = "VehicleEPassportId")
++    private String vehicleEPassportId;
++    @XmlElement(namespace = XmlAnnulNamespaces.doc, name = "RevocationDetails")
++    private epts.data.service.merger.annul_beans.RevocationDetails RevocationDetails = new RevocationDetails();
++}
+diff --git a/src/main/java/epts/data/service/merger/beans/RevocationDetails.java b/src/main/java/epts/data/service/merger/annul_beans/RevocationDetails.java
+similarity index 67%
+rename from src/main/java/epts/data/service/merger/beans/RevocationDetails.java
+rename to src/main/java/epts/data/service/merger/annul_beans/RevocationDetails.java
+index c080e505a8a2cecae9db99101b48f41536b841d3..5d6ce813bb5b7a2572ea3d42cab4c5a7ea4c8b71 100644
+--- a/src/main/java/epts/data/service/merger/beans/RevocationDetails.java
++++ b/src/main/java/epts/data/service/merger/annul_beans/RevocationDetails.java
+@@ -1,4 +1,4 @@
+-package epts.data.service.merger.beans;
++package epts.data.service.merger.annul_beans;
+ 
+ import jakarta.xml.bind.annotation.XmlAccessType;
+ import jakarta.xml.bind.annotation.XmlAccessorOrder;
+@@ -12,8 +12,8 @@ import lombok.Setter;
+ @Setter
+ @Getter
+ public class RevocationDetails {
+-    @XmlElement(namespace = XmlNamespaces.doc, name = "RevocationReason")
++    @XmlElement(namespace = XmlAnnulNamespaces.doc, name = "RevocationReason")
+     private String RevocationReason;
+-    @XmlElement(namespace = XmlNamespaces.doc, name = "RevocationReasonDescription")
++    @XmlElement(namespace = XmlAnnulNamespaces.doc, name = "RevocationReasonDescription")
+     private String RevocationReasonDescription;
+ }
+diff --git a/src/main/java/epts/data/service/merger/annul_beans/XmlAnnulNamespaces.java b/src/main/java/epts/data/service/merger/annul_beans/XmlAnnulNamespaces.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..56a7558472a98dda0ef6a26a0746cd75e2c73d0a
+--- /dev/null
++++ b/src/main/java/epts/data/service/merger/annul_beans/XmlAnnulNamespaces.java
+@@ -0,0 +1,7 @@
++package epts.data.service.merger.annul_beans;
++
++public class XmlAnnulNamespaces {
+*secret*
++}
+\ No newline at end of file
+diff --git a/src/main/java/epts/data/service/merger/annul_beans/package-info.java b/src/main/java/epts/data/service/merger/annul_beans/package-info.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..acb30b666110ed7221ec1f348129d9ccf0a3f2ef
+--- /dev/null
++++ b/src/main/java/epts/data/service/merger/annul_beans/package-info.java
+@@ -0,0 +1,13 @@
++@XmlSchema(
++        namespace = XmlAnnulNamespaces.doc,
++        xmlns = {
++                @XmlNs(prefix = "doc", namespaceURI = XmlAnnulNamespaces.doc),
++                @XmlNs(prefix = "trsdo", namespaceURI = XmlAnnulNamespaces.trsdo),
++                @XmlNs(prefix = "trcdo", namespaceURI= XmlAnnulNamespaces.trcdo)
++        },
++        elementFormDefault = XmlNsForm.QUALIFIED)
++package epts.data.service.merger.annul_beans;
++
++import jakarta.xml.bind.annotation.XmlNs;
++import jakarta.xml.bind.annotation.XmlNsForm;
++import jakarta.xml.bind.annotation.XmlSchema;
+\ No newline at end of file
+diff --git a/src/main/java/epts/data/service/merger/beans/ELPTSRevocationRequest.java b/src/main/java/epts/data/service/merger/beans/ELPTSRevocationRequest.java
+deleted file mode 100644
+index 93fd4e3c1ca57b5993d62067dc05b5f6f4cf6f71..0000000000000000000000000000000000000000
+--- a/src/main/java/epts/data/service/merger/beans/ELPTSRevocationRequest.java
++++ /dev/null
+@@ -1,21 +0,0 @@
+-package epts.data.service.merger.beans;
+-
+-import jakarta.xml.bind.annotation.*;
+-import lombok.Getter;
+-import lombok.Setter;
+-
+-@XmlAccessorOrder
+-@XmlAccessorType(XmlAccessType.FIELD)
+-@Setter
+-@Getter
+-@XmlRootElement(name = "ELPTSRevocationRequest", namespace = XmlNamespaces.doc)
+-public class ELPTSRevocationRequest {
+-    @XmlElement(namespace = XmlNamespaces.trsdo, name = "VehicleEPassportKindCode")
+-    private int vehicleEPassportKindCode;
+-    @XmlElement(namespace = XmlNamespaces.trsdo, name = "VehicleEPassportId")
+-    private String vehicleEPassportId;
+-    @XmlElement(namespace = XmlNamespaces.doc, name = "VehicleIdInfoDetails")
+-    private VehicleIdInfoDetails vehicleIdInfoDetails = new VehicleIdInfoDetails();
+-    @XmlElement(namespace = XmlNamespaces.doc, name = "RevocationDetails")
+-    private RevocationDetails RevocationDetails = new RevocationDetails();
+-}
+diff --git a/src/main/java/epts/data/service/merger/builder/RevocationBuilder.java b/src/main/java/epts/data/service/merger/builder/RevocationBuilder.java
+index b04f242c1dd3cf08c1d50ccd6516ffa4cd3bd163..c1b379920dd80ddd4a39f6d80390cf7ef4187392 100644
+--- a/src/main/java/epts/data/service/merger/builder/RevocationBuilder.java
++++ b/src/main/java/epts/data/service/merger/builder/RevocationBuilder.java
+@@ -2,7 +2,7 @@ package epts.data.service.merger.builder;
+ 
+ import epts.data.entity.transport.Car;
+ import epts.data.service.merger.XmlMerger;
+-import epts.data.service.merger.beans.ELPTSRevocationRequest;
++import epts.data.service.merger.annul_beans.ELPTSRevocationRequest;
+ import epts.data.service.merger.convert.RevocationSerializer;
+ import epts.data.service.merger.filler.CarRevocationRequestXmlFiller;
+ import jakarta.xml.bind.JAXBException;
+@@ -26,15 +26,15 @@ public class RevocationBuilder {
+ 
+     static {
+         try {
+-            signFile = Files.readString(Path.of("src/main/resources/xml_to_sign_production.xml"), StandardCharsets.UTF_8);
++            signFile = Files.readString(Path.of("src/main/resources/xml_to_sign_annul.xml"), StandardCharsets.UTF_8);
+         } catch (IOException e) {
+             e.printStackTrace();
+         }
+     }
+ 
+-    public String buildRevocation(Car car) throws JAXBException, ParserConfigurationException, TransformerException, IOException, SAXException {
++    public String buildRevocation(Car car, String reason) throws JAXBException, ParserConfigurationException, TransformerException, IOException, SAXException {
+         CarRevocationRequestXmlFiller filler = new CarRevocationRequestXmlFiller(car, new ELPTSRevocationRequest());
+-        filler.fillExtract();
++        filler.fillExtract(reason);
+         ELPTSRevocationRequest requestClass = filler.getRequest();
+         Document requestXml = new RevocationSerializer().serialize(requestClass);
+ 
+diff --git a/src/main/java/epts/data/service/merger/convert/RevocationSerializer.java b/src/main/java/epts/data/service/merger/convert/RevocationSerializer.java
+index 30389ea86a7b49248691b4e5f31b427ae59c0867..b49019c6d998573b5e0a5c429238e0ce5b355d94 100644
+--- a/src/main/java/epts/data/service/merger/convert/RevocationSerializer.java
++++ b/src/main/java/epts/data/service/merger/convert/RevocationSerializer.java
+@@ -1,6 +1,6 @@
+ package epts.data.service.merger.convert;
+ 
+-import epts.data.service.merger.beans.ELPTSRevocationRequest;
++import epts.data.service.merger.annul_beans.ELPTSRevocationRequest;
+ import jakarta.xml.bind.JAXBContext;
+ import jakarta.xml.bind.JAXBException;
+ import jakarta.xml.bind.Marshaller;
+diff --git a/src/main/java/epts/data/service/merger/filler/CarRevocationRequestXmlFiller.java b/src/main/java/epts/data/service/merger/filler/CarRevocationRequestXmlFiller.java
+index eafc2524fea084889988216ac882b9398ccf3045..666f8145f0d13d357237a71f94283b7c26c115e5 100644
+--- a/src/main/java/epts/data/service/merger/filler/CarRevocationRequestXmlFiller.java
++++ b/src/main/java/epts/data/service/merger/filler/CarRevocationRequestXmlFiller.java
+@@ -1,7 +1,7 @@
+ package epts.data.service.merger.filler;
+ 
+ import epts.data.entity.transport.Car;
+-import epts.data.service.merger.beans.ELPTSRevocationRequest;
++import epts.data.service.merger.annul_beans.ELPTSRevocationRequest;
+ import lombok.Getter;
+ 
+ public class CarRevocationRequestXmlFiller {
+@@ -14,27 +14,15 @@ public class CarRevocationRequestXmlFiller {
+         this.request = request;
+     }
+ 
+-    public void fillExtract() {
++    public void fillExtract(String reason) {
+         request.setVehicleEPassportKindCode(1);
+ 
+-        if (car.getVin() != null && !car.getVin().isEmpty()) {
+-            request.getVehicleIdInfoDetails().getVehicleIdDetails().setVehicleIdentityNumberId(String.valueOf(car.getVin()));
+-            request.getVehicleIdInfoDetails().getVehicleIdDetails().setNotVehicleIdentityNumberIndicator(false);
++        if (car.getPassportNumber() != null && !car.getPassportNumber().isEmpty()) {
++            request.setVehicleEPassportId(car.getPassportNumber());
+         }
+ 
+-        if (car.getEngineNumber() != null && !car.getEngineNumber().isEmpty()) {
+-            request.getVehicleIdInfoDetails().getVehicleEngineIdDetails().setVehicleIdentityNumberId(car.getEngineNumber());
+-            request.getVehicleIdInfoDetails().getVehicleEngineIdDetails().setNotVehicleIdentityNumberIndicator(false);
+-        }
+-
+-        if (car.getBodyId() != null && !car.getBodyId().isEmpty()) {
+-            request.getVehicleIdInfoDetails().getVehicleBodyIdDetails().setVehicleIdentityNumberId(car.getBodyId());
+-            request.getVehicleIdInfoDetails().getVehicleBodyIdDetails().setNotVehicleIdentityNumberIndicator(false);
+-        }
+-
+-        if (car.getFrameId() != null && !car.getFrameId().isEmpty()) {
+-            request.getVehicleIdInfoDetails().getVehicleFrameIdDetails().setVehicleIdentityNumberId(car.getFrameId());
+-            request.getVehicleIdInfoDetails().getVehicleFrameIdDetails().setNotVehicleIdentityNumberIndicator(false);
++        if (reason != null && !reason.isEmpty()) {
++            request.getRevocationDetails().setRevocationReason(reason);
+         }
+     }
+ }
+diff --git a/src/main/java/epts/ui/dialogs/epts/AnnulEptsDialog.java b/src/main/java/epts/ui/dialogs/epts/AnnulEptsDialog.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..69a9a7d84384512791af2c6c5aebf193a03a2141
+--- /dev/null
++++ b/src/main/java/epts/ui/dialogs/epts/AnnulEptsDialog.java
+@@ -0,0 +1,17 @@
++package epts.ui.dialogs.epts;
++
++import com.vaadin.flow.component.ComponentEvent;
++import com.vaadin.flow.component.ComponentEventListener;
++import com.vaadin.flow.shared.Registration;
++import epts.data.entity.epts.GenericEpts;
++import epts.ui.mvp.View;
++
++public interface AnnulEptsDialog extends View {
++    void open();
++
++    void close();
++
++    void bind();
++
++    void clearForms(GenericEpts epts);
++}
+diff --git a/src/main/java/epts/ui/dialogs/epts/AnnulEptsDialogImpl.java b/src/main/java/epts/ui/dialogs/epts/AnnulEptsDialogImpl.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..d408ade616107aebe4f6de0a1c06d40e3d2aa1e4
+--- /dev/null
++++ b/src/main/java/epts/ui/dialogs/epts/AnnulEptsDialogImpl.java
+@@ -0,0 +1,116 @@
++package epts.ui.dialogs.epts;
++
++import com.vaadin.flow.component.AttachEvent;
++import com.vaadin.flow.component.ComponentEvent;
++import com.vaadin.flow.component.ComponentEventListener;
++import com.vaadin.flow.component.DetachEvent;
++import com.vaadin.flow.component.button.Button;
++import com.vaadin.flow.component.button.ButtonVariant;
++import com.vaadin.flow.component.dialog.Dialog;
++import com.vaadin.flow.component.html.H2;
++import com.vaadin.flow.component.orderedlayout.HorizontalLayout;
++import com.vaadin.flow.component.orderedlayout.VerticalLayout;
++import com.vaadin.flow.component.radiobutton.RadioButtonGroup;
++import com.vaadin.flow.component.radiobutton.RadioGroupVariant;
++import com.vaadin.flow.data.binder.Binder;
++import com.vaadin.flow.shared.Registration;
++import epts.data.entity.Company;
++import epts.data.entity.epts.GenericEpts;
++import epts.ui.dialogs.company.CompanyCreatingPresenter;
++import epts.ui.utils.Validator;
++import epts.ui.vaadin.events.SaveEvent;
++import epts.ui.views.epts.EptsPresenter;
++
++import java.io.Serial;
++
++public class AnnulEptsDialogImpl extends Dialog implements AnnulEptsDialog {
++
++    @Serial
++    private static final long serialVersionUID = 2279620937433791378L;
++    private final AnnulEptsDialogPresenter presenter;
++    private final EptsPresenter eptsPresenter;
++
++
++    private RadioButtonGroup<String> radioButtons = new RadioButtonGroup<>();
++    private final Button annulButton = new Button(getTranslation("base-btn.send-btn"));
++    private final Button closeButton = new Button(getTranslation("base-btn.close-btn"));
++    private final Binder<GenericEpts> binder;
++
++    public AnnulEptsDialogImpl(AnnulEptsDialogPresenter presenter, EptsPresenter eptsPresenter) {
++        this.binder = new Binder<>();
++        this.presenter = presenter;
++        this.eptsPresenter = eptsPresenter;
++        init();
++    }
++
++
++    @Override
++    public void init() {
++
++        getElement().setAttribute("aria-label", "Создать компанию");
++        getElement().setProperty("noCloseOnEsc", true);
++        getElement().setProperty("noCloseOnOutsideClick", true);
++
++        H2 headline = new H2(getTranslation("dialog-text.annul-epts"));
++        headline.getStyle().set("margin", "0").set("font-size", "1.5em")
++                .set("font-weight", "bold");
++
++        annulButton.addThemeVariants(ButtonVariant.LUMO_PRIMARY);
++        radioButtons.addThemeVariants(RadioGroupVariant.LUMO_VERTICAL);
++        radioButtons.setLabel(getTranslation("dialog-text.annul-epts-confirm"));
++        radioButtons.setItems("Несоответствие года изготовления",
++                "Несоответствие сведений об идентификационном номере ТС (шасси ТС)",
++                "Несоответствие сведений о документе, подтверждающем соответствие ТС (шасси ТС) обязательным требованиям безопасности");
++
++        setButtonsBehavior();
++
++        HorizontalLayout buttonLayout = new HorizontalLayout();
++        buttonLayout.add(annulButton, closeButton);
++        VerticalLayout dialogLayout = new VerticalLayout();
++        dialogLayout.add(headline, radioButtons, buttonLayout);
++        add(dialogLayout);
++
++        bind();
++
++    }
++
++    @Override
++    public void bind() {
++        binder.setBean(presenter.getGenericEpts());
++    }
++
++
++    @Override
++    protected void onAttach(AttachEvent attachEvent) {
++        presenter.onAttach(this);
++    }
++
++    @Override
++    protected void onDetach(DetachEvent detachEvent) {
++        presenter.onDetach();
++    }
++
++    @Override
++    public void clearForms(GenericEpts epts) {binder.readBean(epts);}
++
++    private void setButtonsBehavior() {
++        annulButton.addClickListener(clickEvent -> {
++            binder.validate();
++            if (binder.isValid()) {
++                String reason = radioButtons.getValue();
++                if (reason == "Несоответствие года изготовления") {
++                    reason = "011";
++                } else if (reason == "Несоответствие сведений об идентификационном номере ТС (шасси ТС)") {
++                    reason = "012";
++                } else if (reason == "Несоответствие сведений о документе, подтверждающем соответствие ТС (шасси ТС) обязательным требованиям безопасности") {
++                    reason = "013";
++                } else {
++                    reason = "";
++                }
++                presenter.handleAnnulClick(reason, eptsPresenter);
++            }
++        });
++        closeButton.addClickListener(clickEvent -> presenter.handleCloseClick());
++    }
++
++}
+diff --git a/src/main/java/epts/ui/dialogs/epts/AnnulEptsDialogPresenter.java b/src/main/java/epts/ui/dialogs/epts/AnnulEptsDialogPresenter.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..890435da332730828930167af2231ddb296466da
+--- /dev/null
++++ b/src/main/java/epts/ui/dialogs/epts/AnnulEptsDialogPresenter.java
+@@ -0,0 +1,35 @@
++package epts.ui.dialogs.epts;
++
++import com.vaadin.flow.component.dialog.Dialog;
++import com.vaadin.flow.component.notification.NotificationVariant;
++import com.vaadin.flow.spring.annotation.RouteScope;
++import com.vaadin.flow.spring.annotation.SpringComponent;
++import epts.data.entity.Company;
++import epts.data.entity.epts.GenericEpts;
++import epts.data.service.epts.GenericEptsService;
++import epts.ui.mvp.Presenter;
++import epts.ui.views.epts.EptsPresenter;
++import lombok.Getter;
++import org.springframework.beans.factory.annotation.Autowired;
++
++@SpringComponent
++@RouteScope
++public class AnnulEptsDialogPresenter extends Presenter<AnnulEptsDialog> {
++    @Getter
++    private final GenericEptsService genericEptsService;
++    @Getter
++    private GenericEpts genericEpts;
++
++    public AnnulEptsDialogPresenter(@Autowired GenericEptsService genericEptsService) {
++        this.genericEptsService = genericEptsService;
++    }
++
++    public void handleAnnulClick(String reason, EptsPresenter presenter) {
++        presenter.handleCancelConfirmClick(reason);
++        view.close();
++    }
++    public void handleCloseClick() {
++        view.clearForms(genericEpts);
++        view.close();
++    }
++}
+diff --git a/src/main/java/epts/ui/dialogs/specificationid/trailer/EptsForAllTrailersCreatingPresenter.java b/src/main/java/epts/ui/dialogs/specificationid/trailer/EptsForAllTrailersCreatingPresenter.java
+index e3fc0302dbec6918d142d561a98e95f454743d05..05bed0d326a4ff3ec5254daa7e88ba123a395810 100644
+--- a/src/main/java/epts/ui/dialogs/specificationid/trailer/EptsForAllTrailersCreatingPresenter.java
++++ b/src/main/java/epts/ui/dialogs/specificationid/trailer/EptsForAllTrailersCreatingPresenter.java
+@@ -131,11 +131,11 @@ public class EptsForAllTrailersCreatingPresenter extends EptsForAllCreatingPrese
+     private void sendRequest(Trailer Trailer) {
+         GenericEpts genericEpts = Trailer.getEpts().getGenericEpts();
+         long genericEptsId = genericEpts.getId();
+-        elptsService.sendXml(genericEptsId);
++        elptsService.sendReleaseXml(genericEptsId);
+         view.showNotification("Запрос на выпуск ЭПТС создан успешно!", NotificationVariant.LUMO_SUCCESS);
+ 
+         genericEpts = trailerService.get(Trailer.getId()).orElseThrow().getEpts().getGenericEpts();
+         long createRequestId = genericEpts.getCreateRequestId();
+-        elptsService.sendPoll(createRequestId);
++        elptsService.sendReleasePoll(createRequestId);
+     }
+ }
+diff --git a/src/main/java/epts/ui/dialogs/specificationid/truck/EptsForAllTrucksCreatingPresenter.java b/src/main/java/epts/ui/dialogs/specificationid/truck/EptsForAllTrucksCreatingPresenter.java
+index 2fd0129b9b7f6d126a2cb289a394a96acc217f51..a9580f85bd79c2edfee8ed91725a4d7bb57f8b8f 100644
+--- a/src/main/java/epts/ui/dialogs/specificationid/truck/EptsForAllTrucksCreatingPresenter.java
++++ b/src/main/java/epts/ui/dialogs/specificationid/truck/EptsForAllTrucksCreatingPresenter.java
+@@ -134,7 +134,7 @@ public class EptsForAllTrucksCreatingPresenter extends EptsForAllCreatingPresent
+     private void sendRequest(Truck truck){
+         GenericEpts genericEpts = truck.getEpts().getGenericEpts();
+         long genericEptsId = genericEpts.getId();
+-        elptsService.sendXml(genericEptsId);
++        elptsService.sendReleaseXml(genericEptsId);
+         view.showNotification("Запрос на выпуск ЭПТС создан успешно!", NotificationVariant.LUMO_SUCCESS);
+     }
+ 
+diff --git a/src/main/java/epts/ui/views/epts/EptsPresenter.java b/src/main/java/epts/ui/views/epts/EptsPresenter.java
+index 6cc190d3dbc7e5869f00e4406e37e9bda293d569..37b68add6dc46a6c157f63f0577c95392e7c174c 100644
+--- a/src/main/java/epts/ui/views/epts/EptsPresenter.java
++++ b/src/main/java/epts/ui/views/epts/EptsPresenter.java
+@@ -3,6 +3,7 @@ package epts.ui.views.epts;
+ import com.vaadin.flow.component.notification.NotificationVariant;
+ import epts.data.service.api.ElptsService;
+ import epts.ui.mvp.Presenter;
++import epts.ui.vaadin.events.SaveEvent;
+ import lombok.Getter;
+ import lombok.Setter;
+ 
+@@ -16,27 +17,31 @@ public abstract class EptsPresenter<V extends EptsView, T> extends Presenter<V>
+         this.elptsService = elptsService;
+     }
+ 
+-    public void handleCancellationEptsClick() {
+-        view.openCancelConfirmDialog();
++    public void handleReleaseEptsClick() {
++        view.openReleaseConfirmDialog();
+     }
+ 
+-    public void handleChangingEptsClick() {
+-        view.openChangingConfirmDialog();
++    public void handleCancelEptsClick() {
++        view.openCancelConfirmDialog();
+     }
+ 
+-    public void handleReleaseEptsClick() {
+-        view.openReleaseConfirmDialog();
++    public void handleChangeEptsClick() {
++        view.openChangeConfirmDialog();
+     }
+ 
+-    public void handleCancellationConfirmClick() {
+-        view.showNotification("Запрос на аннулирование создан успешно!", NotificationVariant.LUMO_SUCCESS);
+-    }
++    public abstract void handleReleaseConfirmClick();
++
++    public abstract void handleReleaseStatusClick();
++
++    public abstract void handleCancelConfirmClick(String reason);
+ 
+-    public void handleChangingConfirmClick() {
++    public abstract void handleCancelStatusClick();
++
++    public void handleChangeConfirmClick() {
+         view.showNotification("Запрос на изменение отправлен!", NotificationVariant.LUMO_SUCCESS);
+     }
+ 
+-    public abstract void handleReleaseConfirmCLick();
+-
+-    public abstract void handleGetReleaseEptsStatusClick();
+-}
+\ No newline at end of file
++    public void handleChangeStatusClick() {
++        view.showNotification("Запрос на проверку статуса изменения отправлен успешно!", NotificationVariant.LUMO_SUCCESS);
++    }
++}
+diff --git a/src/main/java/epts/ui/views/epts/EptsView.java b/src/main/java/epts/ui/views/epts/EptsView.java
+index 47b823444dc75bf15562532ccdd0af06da5bad65..40555f0d893bada54b440b3d5c1248c3770c3de1 100644
+--- a/src/main/java/epts/ui/views/epts/EptsView.java
++++ b/src/main/java/epts/ui/views/epts/EptsView.java
+@@ -7,5 +7,5 @@ public interface EptsView<T> extends View {
+ 
+     void openReleaseConfirmDialog();
+ 
+-    void openChangingConfirmDialog();
++    void openChangeConfirmDialog();
+ }
+diff --git a/src/main/java/epts/ui/views/epts/EptsViewImpl.java b/src/main/java/epts/ui/views/epts/EptsViewImpl.java
+index 8c9537986699efadb0189dc2c2a587d16ab560ec..87e551fa631ffe59f2e7850db558a1fddebe05d3 100644
+--- a/src/main/java/epts/ui/views/epts/EptsViewImpl.java
++++ b/src/main/java/epts/ui/views/epts/EptsViewImpl.java
+@@ -1,5 +1,6 @@
+ package epts.ui.views.epts;
+ 
++import com.vaadin.flow.component.ClickNotifier;
+ import com.vaadin.flow.component.Component;
+ import com.vaadin.flow.component.UI;
+ import com.vaadin.flow.component.button.Button;
+@@ -7,13 +8,24 @@ import com.vaadin.flow.component.button.ButtonVariant;
+ import com.vaadin.flow.component.icon.Icon;
+ import com.vaadin.flow.component.icon.VaadinIcon;
+ import com.vaadin.flow.component.orderedlayout.VerticalLayout;
++import com.vaadin.flow.component.radiobutton.RadioButtonGroup;
++import com.vaadin.flow.component.radiobutton.RadioGroupVariant;
+ import com.vaadin.flow.data.binder.Binder;
+ import com.vaadin.flow.router.*;
++import epts.data.service.epts.GenericEptsService;
++import epts.ui.dialogs.company.CompanyCreatingDialog;
++import epts.ui.dialogs.company.CompanyCreatingDialogImpl;
++import epts.ui.dialogs.epts.AnnulEptsDialog;
++import epts.ui.dialogs.epts.AnnulEptsDialogImpl;
++import epts.ui.dialogs.epts.AnnulEptsDialogPresenter;
+ import epts.ui.layouts.ToolsLayout;
+ import epts.ui.utils.Navigator;
++import epts.ui.vaadin.events.SaveEvent;
++import epts.ui.views.epts.car.CarEptsPresenter;
+ import epts.ui.views.requests.RequestsViewImpl;
+ import org.claspina.confirmdialog.ButtonOption;
+ import org.claspina.confirmdialog.ConfirmDialog;
++import org.springframework.beans.factory.annotation.Autowired;
+ 
+ import java.util.Objects;
+ 
+@@ -24,8 +36,12 @@ public abstract class EptsViewImpl<T> extends VerticalLayout implements EptsView
+     private final EptsPresenter<? extends EptsView, T> presenter;
+     private Button requestButton;
+ 
+-    public EptsViewImpl(EptsPresenter<? extends EptsView, T> presenter) {
++    final AnnulEptsDialogPresenter annulEptsDialogPresenter;
++
++    public EptsViewImpl(EptsPresenter<? extends EptsView, T> presenter,
++                        @Autowired AnnulEptsDialogPresenter annulEptsDialogPresenter) {
+         this.presenter = presenter;
++        this.annulEptsDialogPresenter = annulEptsDialogPresenter;
+         this.binder = new Binder<>();
+     }
+ 
+@@ -50,22 +66,25 @@ public abstract class EptsViewImpl<T> extends VerticalLayout implements EptsView
+         releaseEptsButton.addThemeVariants(ButtonVariant.LUMO_PRIMARY);
+ 
+         Button getReleaseEptsStatusButton = new Button(getTranslation("tool-buttons.check-epts-request"),
+-                buttonClickEvent -> presenter.handleGetReleaseEptsStatusClick());
++                buttonClickEvent -> presenter.handleReleaseStatusClick());
+         getReleaseEptsStatusButton.addThemeVariants(ButtonVariant.LUMO_PRIMARY);
+ 
+         Button cancelEptsButton = new Button(getTranslation("tool-buttons.annul"),
+-                buttonClickEvent -> presenter.handleCancellationEptsClick());
++                buttonClickEvent -> presenter.handleCancelEptsClick());
+         cancelEptsButton.addThemeVariants(ButtonVariant.LUMO_PRIMARY);
+ 
++        Button getCancelEptsStatusButton = new Button(getTranslation("tool-buttons.check-annul-request"),
++                buttonClickEvent -> presenter.handleCancelStatusClick());
++        getCancelEptsStatusButton.addThemeVariants(ButtonVariant.LUMO_PRIMARY);
+ 
+-        Component[] components = {requestButton, releaseEptsButton, getReleaseEptsStatusButton, cancelEptsButton};
++        Component[] components = {requestButton, releaseEptsButton, getReleaseEptsStatusButton, cancelEptsButton, getCancelEptsStatusButton};
+         ToolsLayout toolsLayout = new ToolsLayout(goBack, components);
+ 
+         Button changingEptsButton = new Button(getTranslation("tool-buttons.change"),
+                 buttonClickEvent -> {
+                     binder.validate();
+                     if (binder.isValid()) {
+-                        presenter.handleChangingEptsClick();
++                        presenter.handleChangeEptsClick();
+                     }
+                 });
+         changingEptsButton.addThemeVariants(ButtonVariant.LUMO_PRIMARY);
+@@ -78,34 +97,29 @@ public abstract class EptsViewImpl<T> extends VerticalLayout implements EptsView
+     }
+ 
+     @Override
+-    public void openReleaseConfirmDialog() {
+-        ConfirmDialog
+-                .createQuestion()
+-                .withCaption(getTranslation("dialog-text.create-epts"))
+-                .withMessage(getTranslation("dialog-text.create-epts-confirm"))
+-                .withOkButton(presenter::handleReleaseConfirmCLick)
+-                .withCancelButton(ButtonOption.caption(getTranslation("base-btn.cancel-btn")))
+-                .open();
++    public void openCancelConfirmDialog() {
++        AnnulEptsDialog annulEptsDialog = new AnnulEptsDialogImpl(annulEptsDialogPresenter, presenter);
++        annulEptsDialog.open();
+     }
+ 
+     @Override
+-    public void openCancelConfirmDialog() {
++    public void openReleaseConfirmDialog() {
+         ConfirmDialog
+                 .createQuestion()
+-                .withCaption(getTranslation("dialog-text.annul-epts"))
+-                .withMessage(getTranslation("dialog-text.annul-epts-confirm"))
+-                .withOkButton(presenter::handleCancellationConfirmClick)
++                .withCaption(getTranslation("dialog-text.create-epts"))
++                .withMessage(getTranslation("dialog-text.create-epts-confirm"))
++                .withOkButton(presenter::handleReleaseConfirmClick)
+                 .withCancelButton(ButtonOption.caption(getTranslation("base-btn.cancel-btn")))
+                 .open();
+     }
+ 
+     @Override
+-    public void openChangingConfirmDialog() {
++    public void openChangeConfirmDialog() {
+         ConfirmDialog
+                 .createQuestion()
+                 .withCaption(getTranslation("dialog-text.change-epts"))
+                 .withMessage(getTranslation("dialog-text.change-epts-confirm"))
+-                .withOkButton(presenter::handleCancellationConfirmClick)
++                .withOkButton(presenter::handleChangeConfirmClick)
+                 .withCancelButton(ButtonOption.caption(getTranslation("base-btn.cancel-btn")))
+                 .open();
+     }
+diff --git a/src/main/java/epts/ui/views/epts/car/CarEptsPresenter.java b/src/main/java/epts/ui/views/epts/car/CarEptsPresenter.java
+index 53d79845543c82f36330fadde856b2bdc06e52ae..908bb4351323014d3a1479d83e5b349f17784a9f 100644
+--- a/src/main/java/epts/ui/views/epts/car/CarEptsPresenter.java
++++ b/src/main/java/epts/ui/views/epts/car/CarEptsPresenter.java
+@@ -31,14 +31,14 @@ public class CarEptsPresenter extends EptsPresenter<CarEptsView, Car> {
+     }
+ 
+     @Override
+-    public void handleReleaseConfirmCLick() {
++    public void handleReleaseConfirmClick() {
+         Car car = carService.get(getTransportId()).orElseThrow();
+         elptsService.sendXmlRequest(car);
+         view.showNotification("Запрос на выпуск ЭПТС создан успешно!", NotificationVariant.LUMO_SUCCESS);
+     }
+ 
+     @Override
+-    public void handleGetReleaseEptsStatusClick() {
++    public void handleReleaseStatusClick() {
+         Car car = carService.get(getTransportId()).orElseThrow();
+         GenericEpts genericEpts = carService.get(car.getId()).orElseThrow().getEpts().getGenericEpts();
+         Request request;
+@@ -48,14 +48,29 @@ public class CarEptsPresenter extends EptsPresenter<CarEptsView, Car> {
+             view.showNotification("Запрос не существует!", NotificationVariant.LUMO_ERROR);
+             return;
+         }
+-        String status = request.getStatus();
+-        if (status.length() > 5 && !status.contains("ErrorCode") && status.contains(",")) {
+-            genericEpts.setStatus(status.substring(status.indexOf(':') + 1, status.indexOf(',')));
+-        } else {
+-            genericEpts.setStatus("Запрошен");
+-        }
+-        genericEptsService.update(genericEpts);
++        elptsService.updateRequestStatus(request, genericEpts);
+         view.showNotification("Запрос на проверку статуса отправлен успешно!", NotificationVariant.LUMO_SUCCESS);
+     }
+ 
++    @Override
++    public void handleCancelConfirmClick(String reason) {
++        Car car = carService.get(getTransportId()).orElseThrow();
++        GenericEpts genericEpts = car.getEpts().getGenericEpts();
++        long genericEptsId = genericEpts.getId();
++        elptsService.sendAnnulXml(genericEptsId, car, reason); // Temp (extra variable "car").
++        view.showNotification("Запрос на аннулирование создан успешно!", NotificationVariant.LUMO_SUCCESS);
++    }
++
++    @Override
++    public void handleCancelStatusClick() {
++        Car car = carService.get(getTransportId()).orElseThrow();
++        GenericEpts genericEpts = carService.get(car.getId()).orElseThrow().getEpts().getGenericEpts();
++        Long createRequestId = genericEpts.getCreateRequestId();
++        if (createRequestId == null) {
++            view.showNotification("Запрос на аннулирование ЕПТС не существует!", NotificationVariant.LUMO_ERROR);
++            return;
++        }
++        elptsService.sendAnnulPoll(createRequestId);
++        view.showNotification("Запрос на проверку статуса аннулирования отправлен успешно!", NotificationVariant.LUMO_SUCCESS);
++    }
+ }
+\ No newline at end of file
+diff --git a/src/main/java/epts/ui/views/epts/car/CarEptsViewImpl.java b/src/main/java/epts/ui/views/epts/car/CarEptsViewImpl.java
+index a1365a3f6fb594d130b54423ef3c2381db032b9b..313933e7f1e526f873599f2f170122bf805e0bbc 100644
+--- a/src/main/java/epts/ui/views/epts/car/CarEptsViewImpl.java
++++ b/src/main/java/epts/ui/views/epts/car/CarEptsViewImpl.java
+@@ -10,8 +10,12 @@ import com.vaadin.flow.router.Route;
+ import com.vaadin.flow.router.RouteAlias;
+ import com.vaadin.flow.server.auth.AnonymousAllowed;
+ import epts.data.entity.transport.Car;
++import epts.ui.dialogs.epts.AnnulEptsDialog;
++import epts.ui.dialogs.epts.AnnulEptsDialogImpl;
++import epts.ui.dialogs.epts.AnnulEptsDialogPresenter;
+ import epts.ui.layouts.BaseLayout;
+ import epts.ui.utils.Validator;
++import epts.ui.vaadin.events.SaveEvent;
+ import epts.ui.views.epts.EptsViewImpl;
+ import org.springframework.beans.factory.annotation.Autowired;
+ 
+@@ -27,10 +31,13 @@ public class CarEptsViewImpl extends EptsViewImpl<Car> implements CarEptsView {
+             organizationName, modification, colorShade, drawingWheels, transmission,
+             fuelType, idInfo, organizationInfo;
+     IntegerField productionYear, maxPower, maxWeight, weight;
+-    
+ 
+-    public CarEptsViewImpl(@Autowired final CarEptsPresenter presenter) {
+-        super(presenter);
++    //private final AnnulEptsDialogPresenter annulEptsDialogPresenter;
++
++    public CarEptsViewImpl(@Autowired final CarEptsPresenter presenter,
++                           @Autowired final AnnulEptsDialogPresenter annulEptsDialogPresenter) {
++        //this.annulEptsDialogPresenter = annulEptsDialogPresenter;
++        super(presenter, annulEptsDialogPresenter);
+         presenter.onAttach(this);
+         this.binder = new Binder<>();
+     }
+@@ -183,4 +190,5 @@ public class CarEptsViewImpl extends EptsViewImpl<Car> implements CarEptsView {
+                 .withValidator(Validator.getEmptyStringValidator(), getTranslation("validation-message.fill-field"))
+                 .bind(Car::getVin, Car::setVin); // нет нужного поля
+     }
++
+ }
+diff --git a/src/main/java/epts/ui/views/epts/truck/TruckEptsPresenter.java b/src/main/java/epts/ui/views/epts/truck/TruckEptsPresenter.java
+index bb5c891ff79e564dba79f2a04dc418e688c7ad89..5738fc627eb54cc425c67c3b0ac546d42a32e57b 100644
+--- a/src/main/java/epts/ui/views/epts/truck/TruckEptsPresenter.java
++++ b/src/main/java/epts/ui/views/epts/truck/TruckEptsPresenter.java
+@@ -1,7 +1,5 @@
+ package epts.ui.views.epts.truck;
+ 
+-import java.util.Optional;
+-
+ import org.springframework.beans.factory.annotation.Autowired;
+ 
+ import com.vaadin.flow.component.notification.NotificationVariant;
+@@ -32,16 +30,16 @@ public class TruckEptsPresenter extends EptsPresenter<TruckEptsView, Truck> {
+ 
+     // TODO: test later.
+     @Override
+-    public void handleReleaseConfirmCLick() {
++    public void handleReleaseConfirmClick() {
+         Truck truck = truckService.get(getTransportId()).orElseThrow();
+         GenericEpts genericEpts = truck.getEpts().getGenericEpts();
+         long id = genericEpts.getId();
+-        elptsService.sendXml(id);
++        elptsService.sendReleaseXml(id);
+         view.showNotification("Запрос на выпуск ЭПТС создан успешно!", NotificationVariant.LUMO_SUCCESS);
+     }
+ 
+     @Override
+-    public void handleGetReleaseEptsStatusClick() {
++    public void handleReleaseStatusClick() {
+         Truck truck = truckService.get(getTransportId()).orElseThrow();
+         GenericEpts genericEpts = truckService.get(truck.getId()).orElseThrow().getEpts().getGenericEpts();
+         Long createRequestId = genericEpts.getCreateRequestId();
+@@ -49,7 +47,29 @@ public class TruckEptsPresenter extends EptsPresenter<TruckEptsView, Truck> {
+             view.showNotification("Запрос на выпуск ЭПТС не существует!", NotificationVariant.LUMO_ERROR);
+             return;
+         }
+-        elptsService.sendPoll(createRequestId);
++        elptsService.sendReleasePoll(createRequestId);
+         view.showNotification("Запрос на проверку статуса отправлен успешно!", NotificationVariant.LUMO_SUCCESS);
+     }
++
++    @Override
++    public void handleCancelConfirmClick(String reason) {
++        Truck truck = truckService.get(getTransportId()).orElseThrow();
++        GenericEpts genericEpts = truck.getEpts().getGenericEpts();
++        long genericEptsId = genericEpts.getId();
++        elptsService.sendAnnulXml(genericEptsId, null, reason); // TODO: temp.
++        view.showNotification("Запрос на аннулирование создан успешно!", NotificationVariant.LUMO_SUCCESS);
++    }
++
++    @Override
++    public void handleCancelStatusClick() {
++        Truck truck = truckService.get(getTransportId()).orElseThrow();
++        GenericEpts genericEpts = truckService.get(truck.getId()).orElseThrow().getEpts().getGenericEpts();
++        Long createRequestId = genericEpts.getCreateRequestId();
++        if (createRequestId == null) {
++            view.showNotification("Запрос на аннулирование ЕПТС не существует!", NotificationVariant.LUMO_ERROR);
++            return;
++        }
++        elptsService.sendAnnulPoll(createRequestId);
++        view.showNotification("Запрос на проверку статуса аннулирования отправлен успешно!", NotificationVariant.LUMO_SUCCESS);
++    }
+ }
+diff --git a/src/main/java/epts/ui/views/epts/truck/TruckEptsViewImpl.java b/src/main/java/epts/ui/views/epts/truck/TruckEptsViewImpl.java
+index 6ee8ef9f138d92f1b9da76e9cf3bcc9674e95b2c..040cd76bffaed4d6b52c51ed0ca99b93c4188708 100644
+--- a/src/main/java/epts/ui/views/epts/truck/TruckEptsViewImpl.java
++++ b/src/main/java/epts/ui/views/epts/truck/TruckEptsViewImpl.java
+@@ -2,6 +2,7 @@ package epts.ui.views.epts.truck;
+ 
+ import javax.annotation.PostConstruct;
+ 
++import epts.ui.dialogs.epts.AnnulEptsDialogPresenter;
+ import org.springframework.beans.factory.annotation.Autowired;
+ 
+ import com.vaadin.flow.component.formlayout.FormLayout;
+@@ -30,8 +31,9 @@ public class TruckEptsViewImpl extends EptsViewImpl<Truck> implements TruckEptsV
+             fuelType, idInfo, organizationInfo;
+     IntegerField productionYear, maxPower, maxWeight, weight;
+ 
+-    public TruckEptsViewImpl(@Autowired final TruckEptsPresenter presenter) {
+-        super(presenter);
++    public TruckEptsViewImpl(@Autowired final TruckEptsPresenter presenter,
++                             @Autowired final AnnulEptsDialogPresenter annulEptsDialogPresenter) {
++        super(presenter, annulEptsDialogPresenter);
+         presenter.onAttach(this);
+         this.binder = new Binder<>();
+     }
+diff --git a/src/main/java/epts/ui/views/specification/specificationid/truck/TruckSpecificationIdPresenter.java b/src/main/java/epts/ui/views/specification/specificationid/truck/TruckSpecificationIdPresenter.java
+index 7e1324b30c261f89bf2f45f4674d4ef201b26c0e..17361e6f49e020b00279f1d94c8765f76297fc96 100644
+--- a/src/main/java/epts/ui/views/specification/specificationid/truck/TruckSpecificationIdPresenter.java
++++ b/src/main/java/epts/ui/views/specification/specificationid/truck/TruckSpecificationIdPresenter.java
+@@ -61,7 +61,7 @@ public class TruckSpecificationIdPresenter extends SpecificationIdPresenter<Truc
+             view.showNotification("Запрос на выпуск ЭПТС не существует!", NotificationVariant.LUMO_ERROR);
+             return;
+         }
+-        elptsService.sendPoll(createRequestId);
++        elptsService.sendReleasePoll(createRequestId);
+         view.showNotification("Запрос на проверку статуса отправлен успешно!", NotificationVariant.LUMO_SUCCESS);
+     }
+ }
+diff --git a/src/main/resources/annul_poll_1.xml b/src/main/resources/annul_poll_1.xml
+new file mode 100644
+index 0000000000000000000000000000000000000000..d99b32c7e7afa4f7f01f9ae7a636e5856de88ea7
+--- /dev/null
++++ b/src/main/resources/annul_poll_1.xml
+@@ -0,0 +1,8 @@
++*secret*
+\ No newline at end of file
+diff --git a/src/main/resources/annul_poll_2.xml b/src/main/resources/annul_poll_2.xml
+new file mode 100644
+index 0000000000000000000000000000000000000000..eace576c519732b825bf63aeb472e15b8cd8dbad
+--- /dev/null
++++ b/src/main/resources/annul_poll_2.xml
+@@ -0,0 +1,18 @@
++*secret*
+\ No newline at end of file
+diff --git a/src/main/resources/application.properties b/src/main/resources/application.properties
+index a5e8f880e0f08a5a73680ccaf07ccff40a51b1e6..3500de7f3b38cadd84a56587994568a35a3b9ce6 100644
+--- a/src/main/resources/application.properties
++++ b/src/main/resources/application.properties
+@@ -11,7 +11,7 @@ spring.mustache.check-template-location = false
+ spring.sql.init.mode=embedded
+ spring.sql.init.schema-locations=classpath*:database/create.sql
+ 
+*secret*
+ spring.datasource.username=worker
+ spring.datasource.password=worker1234
+ 
+diff --git a/src/main/resources/localization_en.properties b/src/main/resources/localization_en.properties
+index c450077da10bc4f8d52c074eaa6d57bf841c136b..7203c5063409eaa25a393d81e3fd6e9ea0c129b0 100644
+--- a/src/main/resources/localization_en.properties
++++ b/src/main/resources/localization_en.properties
+@@ -50,6 +50,7 @@ tool-buttons.request=Query list
+ tool-buttons.create-epts=Create an EPTS issue request
+ tool-buttons.check-epts-request=Check EPTS request
+ tool-buttons.annul=Annul EP
++tool-buttons.check-annul-request=Check EPTS annulment request
+ tool-buttons.create-specification=Create specification
+ tool-buttons.create-all-epts=Create EPTS for all vehicles
+ tool-buttons.request-status=Request the status of all EPTS
+diff --git a/src/main/resources/localization_ru.properties b/src/main/resources/localization_ru.properties
+index c63ff265d6bd1188ea9c95e0a04213b8733d9d2c..e7904bab55f7c695cc46f7adf91ba0cafa63e16a 100644
+--- a/src/main/resources/localization_ru.properties
++++ b/src/main/resources/localization_ru.properties
+@@ -51,6 +51,7 @@ tool-buttons.create-company=Создать компанию
+ tool-buttons.request=Список запросов
+ tool-buttons.create-epts=Создать запрос на выпуск ЭПТС
+ tool-buttons.annul=Аннулировать ЭП
++tool-buttons.check-annul-request=Проверить статус запроса на аннулирование
+ tool-buttons.create-specification=Создать спецификацию
+ tool-buttons.create-all-epts=Создать ЭПТС для всех ТС
+ tool-buttons.request-status=Запросить статус всех ЭПТС
+@@ -75,7 +76,7 @@ dialog-text.doc-num-text=Номер документа
+ dialog-text.create-epts=Создать запрос на выпуск ЭПТС
+ dialog-text.create-epts-confirm=Вы действительно хотите создать завпрос на выпуск ЭПТС?
+ dialog-text.annul-epts=Отправить запрос на аннулирование ЭПТС
+-dialog-text.annul-epts-confirm=Вы действительно хотите отправить завпрос на аннулирование ЭПТС?
++dialog-text.annul-epts-confirm=Выберите причину аннулирования ЭПТС
+ dialog-text.change-epts=Отправить запрос на изменение ЭПТС
+ dialog-text.change-epts-confirm=Вы действительно хотите отправить запрос на изменение ЭПТС?
+ dialog-text.search-ep-file=Поиск электронного паспорта по файлу
+diff --git a/src/main/resources/release_poll_1.xml b/src/main/resources/release_poll_1.xml
+new file mode 100644
+index 0000000000000000000000000000000000000000..f903f4733ef5b6047e1fa2051e49628397280e0e
+--- /dev/null
++++ b/src/main/resources/release_poll_1.xml
+@@ -0,0 +1,8 @@
++*secret*
+\ No newline at end of file
+diff --git a/src/main/resources/release_poll_2.xml b/src/main/resources/release_poll_2.xml
+new file mode 100644
+index 0000000000000000000000000000000000000000..2c091f154882b0b4a9c33687feadcb4217446d6e
+--- /dev/null
++++ b/src/main/resources/release_poll_2.xml
+@@ -0,0 +1,18 @@
++*secret*
+\ No newline at end of file
+diff --git a/src/main/resources/xml_to_sign_annul.xml b/src/main/resources/xml_to_sign_annul.xml
+new file mode 100644
+index 0000000000000000000000000000000000000000..e7a8336ed644361c41e33785b027b6edfc5239d4
+--- /dev/null
++++ b/src/main/resources/xml_to_sign_annul.xml
+@@ -0,0 +1,49 @@
++*secret*
+\ No newline at end of file
+diff --git a/src/test/java/epts/data/service/RevocationBuilderTest.java b/src/test/java/epts/data/service/RevocationBuilderTest.java
+index 35917dc8aa98c088b901e099060ee9a505a7b9b2..c4fcfb89a1e36b0fd383203ef6372b60c0a25bcc 100644
+--- a/src/test/java/epts/data/service/RevocationBuilderTest.java
++++ b/src/test/java/epts/data/service/RevocationBuilderTest.java
+@@ -14,6 +14,7 @@ import java.io.IOException;
+ 
+ public class RevocationBuilderTest {
+     Car car;
++    String reason;
+ 
+     @BeforeEach
+     void setUp() {
+@@ -22,22 +23,25 @@ public class RevocationBuilderTest {
+         car.setEngineNumber("EngineNumberTestData");
+         car.setFrameId("FrameIdTestData");
+         car.setBodyId("BodyIdTestData");
++        car.setPassportNumber("164392001015100");
++        reason = "011";
+     }
+ 
+     @Test
+     void buildRevocation() {
+-        RevocationBuilder builder = new RevocationBuilder();
+-        String xml = null;
++        RevocationBuilder revocationBuilder = new RevocationBuilder();
++        String xml = "";
+         try {
+-            xml = builder.buildRevocation(car);
++            xml = revocationBuilder.buildRevocation(car, reason);
+         } catch (JAXBException | ParserConfigurationException | TransformerException | IOException | SAXException e) {
+             e.printStackTrace();
+         }
+ 
+-        try (FileWriter fileWriter = new FileWriter("src/test/resources/RevocationRequest.xml")) {
+-            fileWriter.write(xml);
++        try (FileWriter writer = new FileWriter("src/test/resources/annul/requestWithoutChanges.xml")) {
++            writer.write(xml);
++            writer.flush();
+         } catch (IOException e) {
+-            e.printStackTrace();
++            throw new RuntimeException(e);
+         }
+     }
+ }
+diff --git a/src/test/resources/annul/pollResponse.xml b/src/test/resources/annul/pollResponse.xml
+new file mode 100644
+index 0000000000000000000000000000000000000000..f3234e3dd3991e7a25f23eb202362e5cae510c96
+--- /dev/null
++++ b/src/test/resources/annul/pollResponse.xml
+@@ -0,0 +1,117 @@
++*secret*
+\ No newline at end of file
+diff --git a/src/test/resources/annul/requestFromEpts002.xml b/src/test/resources/annul/requestFromEpts002.xml
+new file mode 100644
+index 0000000000000000000000000000000000000000..028f4051c0a13e9733c18d53c78505779e60d9f2
+--- /dev/null
++++ b/src/test/resources/annul/requestFromEpts002.xml
+@@ -0,0 +1,58 @@
++*secret*
+\ No newline at end of file
+diff --git a/src/test/resources/annul/requestWithChanges.xml b/src/test/resources/annul/requestWithChanges.xml
+new file mode 100644
+index 0000000000000000000000000000000000000000..1cecec4aa0e81bf0a58f5f5f3b8e26ec66abd869
+--- /dev/null
++++ b/src/test/resources/annul/requestWithChanges.xml
+@@ -0,0 +1,55 @@
++*secret*
+\ No newline at end of file
+diff --git a/src/test/resources/annul/requestWithoutChanges.xml b/src/test/resources/annul/requestWithoutChanges.xml
+new file mode 100644
+index 0000000000000000000000000000000000000000..6018d8236f85a75b629c1e2976bf870c58a9943d
+--- /dev/null
++++ b/src/test/resources/annul/requestWithoutChanges.xml
+@@ -0,0 +1,55 @@
++*secret*
+\ No newline at end of file
+diff --git a/src/test/resources/annul/signedPoll.xml b/src/test/resources/annul/signedPoll.xml
+new file mode 100644
+index 0000000000000000000000000000000000000000..b74c22379d35b720e4825a15d09d4a323e1bf3b9
+--- /dev/null
++++ b/src/test/resources/annul/signedPoll.xml
+@@ -0,0 +1,95 @@
++*secret*
+\ No newline at end of file
+diff --git a/src/test/resources/annul/signedXml.xml b/src/test/resources/annul/signedXml.xml
+new file mode 100644
+index 0000000000000000000000000000000000000000..111ae6b38f86994f01b0422a4edee8ea88c2fc2d
+--- /dev/null
++++ b/src/test/resources/annul/signedXml.xml
+@@ -0,0 +1,121 @@
++*secret*
+\ No newline at end of file
+diff --git a/src/test/resources/annul/xmlResponse.xml b/src/test/resources/annul/xmlResponse.xml
+new file mode 100644
+index 0000000000000000000000000000000000000000..16a9ccc72371a130d988a68734af3e3c1dba32f4
+--- /dev/null
++++ b/src/test/resources/annul/xmlResponse.xml
+@@ -0,0 +1,97 @@
++*secret*
+\ No newline at end of file
+diff --git "a/src/test/resources/annul/\320\234\320\260\321\210\320\270\320\275\321\213 \320\275\320\260 \321\202\320\265\321\201\321\202.xlsx" "b/src/test/resources/annul/\320\234\320\260\321\210\320\270\320\275\321\213 \320\275\320\260 \321\202\320\265\321\201\321\202.xlsx"
+new file mode 100644
+index 0000000000000000000000000000000000000000..f78bb27137ba90b24f1f4655a2d77b5c9075d064
+Binary files /dev/null and "b/src/test/resources/annul/\320\234\320\260\321\210\320\270\320\275\321\213 \320\275\320\260 \321\202\320\265\321\201\321\202.xlsx" differ

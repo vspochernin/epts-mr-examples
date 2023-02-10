@@ -1,0 +1,36 @@
+diff --git a/src/main/java/epts/data/service/templates/fillers/CarTemplateFiller.java b/src/main/java/epts/data/service/templates/fillers/CarTemplateFiller.java
+index 9190a95b64e826cb6e17f8e913749e6688c53812..39d024a5129b988ca61ec982b44704313d1aa17c 100644
+--- a/src/main/java/epts/data/service/templates/fillers/CarTemplateFiller.java
++++ b/src/main/java/epts/data/service/templates/fillers/CarTemplateFiller.java
+@@ -37,11 +37,27 @@ public class CarTemplateFiller implements TemplateFiller {
+         if (data.getEnginePower() != 0)
+             template.getEptsPatternResponseGood().getVehicleVariantDetails().getEngineDetails().getEngineMaxPowerDetails().getEngineMaxPowerMeasure().setText(data.getEnginePower());
+ 
+-        if (data.getColor() != null && !data.getColor().isEmpty())
+-            template.getEptsPatternResponseGood().getVehicleDetails().setVehicleBodyColourCode(data.getColor());
++        if (template.getEptsPatternResponseGood().getVehicleDetails().isBodyMultiColourIndicator()) {
++            if (data.getColor() != null && !data.getColor().isEmpty()) {
++                String[] colors = data.getColor().split(",");
++                for (int i = 0; i < colors.length; i++) {
++                    template.getEptsPatternResponseGood().getVehicleDetails().setVehicleBodyColourCode(colors[i].trim());
++                }
++            }
++
++            if (data.getColorText() != null && !data.getColorText().isEmpty()) {
++                String[] colorsTexts = data.getColorText().split(",");
++                for (int i = 0; i < colorsTexts.length; i++) {
++                    template.getEptsPatternResponseGood().getVehicleDetails().setVehicleBodyColourName(colorsTexts[i].trim());
++                }
++            }
++        } else {
++            if (data.getColor() != null && !data.getColor().isEmpty())
++                template.getEptsPatternResponseGood().getVehicleDetails().setVehicleBodyColourCode(data.getColor());
+ 
+-        if (data.getColorText() != null && !data.getColorText().isEmpty())
+-            template.getEptsPatternResponseGood().getVehicleDetails().setVehicleBodyColourName(data.getColorText());
++            if (data.getColorText() != null && !data.getColorText().isEmpty())
++                template.getEptsPatternResponseGood().getVehicleDetails().setVehicleBodyColourName(data.getColorText());
++        }
+ 
+         if (data.getProductionYear() != 0)
+             template.getEptsPatternResponseGood().getVehicleDetails().setManufactureYear(String.valueOf(data.getProductionYear()));

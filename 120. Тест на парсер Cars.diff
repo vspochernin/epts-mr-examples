@@ -1,0 +1,730 @@
+diff --git a/src/main/java/epts/data/exceptions/ParsingEmptyFieldException.java b/src/main/java/epts/data/exceptions/ParsingEmptyFieldException.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..51811203fabe18ab36ad189b18946da5a94840a8
+--- /dev/null
++++ b/src/main/java/epts/data/exceptions/ParsingEmptyFieldException.java
+@@ -0,0 +1,8 @@
++package epts.data.exceptions;
++
++public class ParsingEmptyFieldException extends RuntimeException {
++
++    public ParsingEmptyFieldException(String fieldName) {
++        super("В спецификации отсутствует необходимое поле: " + "\"" + fieldName + "\"");
++    }
++}
+diff --git a/src/main/java/epts/data/service/specification/parsers/CarSpecificationParser.java b/src/main/java/epts/data/service/specification/parsers/CarSpecificationParser.java
+index 2987f7351b7351fa7157616865c77b062dfb0ef5..9ab5d04a2d0546eded7c1590f58a4dfa7ca889ee 100644
+--- a/src/main/java/epts/data/service/specification/parsers/CarSpecificationParser.java
++++ b/src/main/java/epts/data/service/specification/parsers/CarSpecificationParser.java
+@@ -1,14 +1,9 @@
+ package epts.data.service.specification.parsers;
+ 
+ import epts.data.entity.Specification;
+-import epts.data.entity.epts.CarEpts;
+-import epts.data.entity.epts.GenericEpts;
+ import epts.data.entity.transport.Car;
+-import epts.data.entity.transport.GenericVehicle;
+-import epts.data.service.GenericVehicleService;
+-import epts.data.service.epts.CarEptsService;
+-import epts.data.service.epts.GenericEptsService;
+-import epts.data.service.transport.CarService;
++import epts.data.exceptions.ParsingEmptyFieldException;
++
+ import org.apache.poi.ss.usermodel.CellType;
+ import org.apache.poi.xssf.usermodel.XSSFRow;
+ import org.apache.poi.xssf.usermodel.XSSFSheet;
+@@ -16,25 +11,17 @@ import org.apache.poi.xssf.usermodel.XSSFWorkbook;
+ 
+ import java.io.IOException;
+ import java.sql.SQLException;
++import java.util.ArrayList;
++import java.util.List;
+ import java.util.Objects;
+ import java.util.Optional;
+ 
+ public class CarSpecificationParser extends BaseSpecificationParser {
+ 
+-    private final CarService carService;
+-    private final GenericVehicleService genericVehicleService;
+-    private final CarEptsService carEptsService;
+-    private final GenericEptsService genericEptsService;
+-
+-    public CarSpecificationParser(CarService carService, GenericVehicleService genericVehicleService,
+-                                  CarEptsService carEptsService, GenericEptsService genericEptsService) {
+-        this.carService = carService;
+-        this.genericVehicleService = genericVehicleService;
+-        this.carEptsService = carEptsService;
+-        this.genericEptsService = genericEptsService;
++    public CarSpecificationParser() {
+     }
+ 
+-    public void parse(Specification specification) {
++    public List<Car> parse(Specification specification) {
+         XSSFWorkbook workbook = null;
+         try {
+             workbook = new XSSFWorkbook(specification.getDocumentFile().getBinaryStream());
+@@ -46,120 +33,97 @@ public class CarSpecificationParser extends BaseSpecificationParser {
+         int i = skipHeaderRows(sheet);
+         XSSFRow row = sheet.getRow(i);
+ 
++        List<Car> carList = new ArrayList<>();
+         while (sheet.getRow(i) != null &&
+                 sheet.getRow(i).getCell(0) != null &&
+                 sheet.getRow(i).getCell(0).getCellTypeEnum() != CellType.BLANK &&
+                 sheet.getRow(i).getCell(0).getCellTypeEnum() != CellType._NONE) {
+-            String automaker = getStringFromCell(row, "B"); // Марка.
+-            String model = getStringFromCell(row, "C"); // Коммерческое название (Модель).
+-            String type = getStringFromCell(row, "D"); // Тип.
+-            String trim = getStringFromCell(row, "E"); //Модификация.
+-            Optional<String> optionalSeatCount =
+-                    Optional.ofNullable(getStringFromCell(row, "F")).filter(s -> !s.isEmpty());
+-            int seatCount = Integer.parseInt(optionalSeatCount.orElse("-1")); // Количество мест.
+-            String vin = getStringFromCell(row, "G"); // VIN.
+-            String bodyId = getStringFromCell(row, "H"); // Номер кузова.
+-            String frameId = getStringFromCell(row, "I"); // Номер рамы.
+-            // Дата выпуска.
+-            String productionDate = getStringFromCell(row, "J");
+-            String[] time = productionDate.split("-");
++
++            Optional<String> automaker = Optional.ofNullable(getStringFromCell(row, "B")).filter(s -> !s.isEmpty()); // Марка.
++            Optional<String> model = Optional.ofNullable(getStringFromCell(row, "C")).filter(s -> !s.isEmpty()); // Коммерческое название (Модель).
++            Optional<String> type = Optional.ofNullable(getStringFromCell(row, "D")).filter(s -> !s.isEmpty()); // Тип.
++            Optional<String> trim = Optional.ofNullable(getStringFromCell(row, "E")).filter(s -> !s.isEmpty()); //Модификация.
++            Optional<String> optionalSeatCount = Optional.ofNullable(getStringFromCell(row, "F")).filter(s -> !s.isEmpty());
++            Optional<String> vin = Optional.ofNullable(getStringFromCell(row, "G")).filter(s -> !s.isEmpty()); // VIN.
++            Optional<String> bodyId = Optional.ofNullable(getStringFromCell(row, "H")).filter(s -> !s.isEmpty()); // Номер кузова.
++            Optional<String> frameId = Optional.ofNullable(getStringFromCell(row, "I")).filter(s -> !s.isEmpty()); // Номер рамы.
++            Optional<String> productionDate = Optional.ofNullable(getStringFromCell(row, "J")).filter(s -> !s.isEmpty());
++            Optional<String> color = Optional.ofNullable(getStringFromCell(row, "K")).filter(s -> !s.isEmpty()); // Цвет.
++            Optional<String> colorText = Optional.ofNullable(getStringFromCell(row, "L")).filter(s -> !s.isEmpty()); // Оттенок (дополнительный цвет).
++            Optional<String> engineModel = Optional.ofNullable(getStringFromCell(row, "M")).filter(s -> !s.isEmpty()); // Модель двигателя.
++            Optional<String> engineNumber = Optional.ofNullable(getStringFromCell(row, "N")).filter(s -> !s.isEmpty()); // Номер двигателя.
++            Optional<String> optionalEngineCapacity = Optional.ofNullable(getStringFromCell(row, "O")).filter(s -> !s.isEmpty()); // Объём двигателя.
++            Optional<String> optionalEnginePower = Optional.ofNullable(getStringFromCell(row, "P")).filter(s -> !s.isEmpty()); // Мощность.
++            Optional<String> ecoClass = Optional.ofNullable(getStringFromCell(row, "Q")).filter(s -> !s.isEmpty()); // Экологический класс.
++            Optional<String> optionalWeight = Optional.ofNullable(getStringFromCell(row, "R")).filter(s -> !s.isEmpty()); // Снаряженная масса.
++            Optional<String> optionalMaxWeight = Optional.ofNullable(getStringFromCell(row, "S")).filter(s -> !s.isEmpty()); // Максимально допустимая масса.
++            Optional<String> eraGlonassId = Optional.ofNullable(getStringFromCell(row, "T")).filter(s -> !s.isEmpty()); // № ЭРА-ГЛОНАСС.
++            Optional<String> ecuModel = Optional.ofNullable(getStringFromCell(row, "U")).filter(s -> !s.isEmpty()); // Блок управления двигателем, маркировка.
++            Optional<String> engineNumberPlacing = Optional.ofNullable(getStringFromCell(row, "V")).filter(s -> !s.isEmpty()); // Место расположения номера двигателя.
++            Optional<String> optionalLength = Optional.ofNullable(getStringFromCell(row, "W")).filter(s -> !s.isEmpty()); // Длина.
++            Optional<String> optionalWidth = Optional.ofNullable(getStringFromCell(row, "X")).filter(s -> !s.isEmpty());  // Ширина.
++            Optional<String> optionalHeight = Optional.ofNullable(getStringFromCell(row, "Y")).filter(s -> !s.isEmpty()); // Высота.
++            Optional<String> optionalWheelBase = Optional.ofNullable(getStringFromCell(row, "Z")).filter(s -> !s.isEmpty()); // Колесная база.
++            Optional<String> track = Optional.ofNullable(getStringFromCell(row, "AA")).filter(s -> !s.isEmpty()); // Колея передних/задних колес.
++            Optional<String> transmission = Optional.ofNullable(getStringFromCell(row, "AB")).filter(s -> !s.isEmpty()); // Марка, тип трансмиссии, кол-во передач.
++            Optional<String> drivetrain = Optional.ofNullable(getStringFromCell(row, "AC")).filter(s -> !s.isEmpty()); // Колесная формула.
++            Optional<String> tireSize = Optional.ofNullable(getStringFromCell(row, "AD")).filter(s -> !s.isEmpty()); // Размер шин.
++            Optional<String> tempTireSize = Optional.ofNullable(getStringFromCell(row, "AE")).filter(s -> !s.isEmpty()); // Размер шин для временного использования.
++            Optional<String> additionalEquipment = Optional.ofNullable(getStringFromCell(row, "AF")).filter(s -> !s.isEmpty()); // Дополнительное оборудование.
++            Optional<String> otts = Optional.ofNullable(getStringFromCell(row, "AG")).filter(s -> !s.isEmpty());// Номер  ОТТС.
++            Optional<String> productionCountry = Optional.ofNullable(getStringFromCell(row, "AH")).filter(s -> !s.isEmpty()); // Страна производитель.
++            Optional<String> exportCountry = Optional.ofNullable(getStringFromCell(row, "AI")).filter(s -> !s.isEmpty()); // Страна вывоза.
++            Optional<String> suspensionFront = Optional.ofNullable(getStringFromCell(row, "AJ")).filter(s -> !s.isEmpty()); // Тип передней подвески.
++            Optional<String> suspensionRear = Optional.ofNullable(getStringFromCell(row, "AK")).filter(s -> !s.isEmpty()); //  Тип задней подвески.
++
++            String[] time = productionDate.orElseThrow(() -> new ParsingEmptyFieldException("productionDate")).split("-");
+             Optional<String> optionalProductionMonth = Optional.ofNullable(time[0]).filter(s -> !s.isEmpty());
+             Optional<String> optionalProductionYear = Optional.ofNullable(time[1]).filter(s -> !s.isEmpty());
+-            int productionMonth = Integer.parseInt(optionalProductionMonth.orElse("-1"));
+-            int productionYear = Integer.parseInt(optionalProductionYear.orElse("-1"));
+-            String color = getStringFromCell(row, "K"); // Цвет.
+-            String colorText = getStringFromCell(row, "L"); // Оттенок (дополнительный цвет).
+-            String engineModel = getStringFromCell(row, "M"); // Модель двигателя.
+-            String engineNumber = getStringFromCell(row, "N"); // Номер двигателя.
+-            int engineCapacity = Integer.parseInt(getStringFromCell(row, "O")); //Объём двигателя.
+-            int enginePower = Integer.parseInt(getStringFromCell(row, "P")); //Мощность.
+-            String ecoClass = getStringFromCell(row, "Q"); // Экологический класс.
+-            int weight = Integer.parseInt(getStringFromCell(row, "R")); // Снаряженная масса.
+-            int maxWeight = Integer.parseInt(getStringFromCell(row, "S")); // Максимально допустимая масса.
+-            String eraGlonassId = getStringFromCell(row, "T"); // № ЭРА-ГЛОНАСС.
+-            String ecuModel = getStringFromCell(row, "U"); // Блок управления двигателем, маркировка.
+-            String engineNumberPlacing = getStringFromCell(row, "V"); // Место расположения номера двигателя.
+-            Optional<String> optionalLength =
+-                    Optional.ofNullable(getStringFromCell(row, "W")).filter(s -> !s.isEmpty());
+-            Optional<String> optionalWidth =
+-                    Optional.ofNullable(getStringFromCell(row, "X")).filter(s -> !s.isEmpty());
+-            Optional<String> optionalHeight =
+-                    Optional.ofNullable(getStringFromCell(row, "Y")).filter(s -> !s.isEmpty());
+-            Optional<String> optionalWheelBase =
+-                    Optional.ofNullable(getStringFromCell(row, "Z")).filter(s -> !s.isEmpty());
+-            int length = Integer.parseInt(optionalLength.orElse("-1")); // Длина.
+-            int width = Integer.parseInt(optionalWidth.orElse("-1")); // Ширина.
+-            int height = Integer.parseInt(optionalHeight.orElse("-1")); // Высота.
+-            int wheelBase = Integer.parseInt(optionalWheelBase.orElse("-1")); // Колесная база.
+-            String track = getStringFromCell(row, "AA"); // Колея передних/задних колес.
+-            String transmission = getStringFromCell(row, "AB"); // Марка, тип трансмиссии, кол-во передач.
+-            String drivetrain = getStringFromCell(row, "AC"); // Колесная формула.
+-            String tireSize = getStringFromCell(row, "AD"); // Размер шин.
+-            String tempTireSize = getStringFromCell(row, "AE"); // Размер шин для временного использования.
+-            String additionalEquipment = getStringFromCell(row, "AF"); // Дополнительное оборудование.
+-            String otts = getStringFromCell(row, "AG");// Номер  ОТТС.
+-            String productionCountry = getStringFromCell(row, "AH"); // Страна производитель.
+-            String exportCountry = getStringFromCell(row, "AI"); // Страна вывоза.
+-            String suspensionFront = getStringFromCell(row, "AJ"); // Тип передней подвески.
+-            String suspensionRear = getStringFromCell(row, "AK"); //  Тип задней подвески.
+-
+ 
+             Car car = new Car();
+-            car.setAutomaker(automaker);
+-            car.setModel(model);
+-            car.setType(type);
+-            car.setTrim(trim);
+-            car.setSeatCount(seatCount);
+-            car.setVin(vin);
+-            car.setBodyId(bodyId);
+-            car.setFrameId(frameId);
+-            car.setProductionMonth(productionMonth);
+-            car.setProductionYear(productionYear);
+-            car.setColor(color);
+-            car.setColorText(colorText);
+-            car.setEngineModel(engineModel);
+-            car.setEngineNumber(engineNumber);
+-            car.setEngineCapacity(engineCapacity);
+-            car.setEnginePower(enginePower);
+-            car.setEcoClass(ecoClass);
+-            car.setWeight(weight);
+-            car.setMaxWeight(maxWeight);
+-            car.setEraGlonassId(eraGlonassId);
+-            car.setEcuModel(ecuModel);
+-            car.setEngineNumberPlacing(engineNumberPlacing);
+-            car.setLength(length);
+-            car.setWidth(width);
+-            car.setHeight(height);
+-            car.setWheelbase(wheelBase);
+-            car.setTrack(track);
+-            car.setTransmission(transmission);
+-            car.setDrivetrain(drivetrain);
+-            car.setTireSize(tireSize);
+-            car.setTempTireSize(tempTireSize);
+-            car.setAdditionalEquipment(additionalEquipment);
+-            car.setOtts(otts);
+-            car.setProductionCountry(productionCountry);
+-            car.setExportCountry(exportCountry);
+-            car.setSuspensionFront(suspensionFront);
+-            car.setSuspensionRear(suspensionRear);
+-
+-            Car carFromDB = carService.update(car);
+-
+-            GenericVehicle genericVehicle = new GenericVehicle();
+-            genericVehicle.setCar(carFromDB);
+-            genericVehicle.setSpecification(specification);
+-            genericVehicleService.update(genericVehicle);
+-
+-            CarEpts carEpts = new CarEpts();
+-            carEpts.setCar(carFromDB);
+-            carEptsService.update(carEpts);
++            car.setAutomaker(automaker.orElseThrow(() -> new ParsingEmptyFieldException("automaker"))); // Точно надо.
++            car.setModel(model.orElseThrow(() -> new ParsingEmptyFieldException("model"))); // Точно надо.
++            car.setType(type.orElseThrow(() -> new ParsingEmptyFieldException("type"))); // Точно надо.
++            car.setTrim(trim.orElse(""));
++            car.setSeatCount(Integer.parseInt(optionalSeatCount.orElse("-1")));
++            car.setVin(vin.orElseThrow(() -> new ParsingEmptyFieldException("vin"))); // Точно надо.
++            car.setBodyId(bodyId.orElseThrow(() -> new ParsingEmptyFieldException("bodyId"))); // Точно надо.
++            car.setFrameId(frameId.orElse(""));
++            car.setProductionMonth(Integer.parseInt(optionalProductionMonth.orElseThrow(() -> new ParsingEmptyFieldException("productionDate")))); // Точно надо.
++            car.setProductionYear(Integer.parseInt(optionalProductionYear.orElseThrow(() -> new ParsingEmptyFieldException("productionDate")))); // Точно надо.
++            car.setColor(color.orElseThrow(() -> new ParsingEmptyFieldException("color"))); // Точно надо.
++            car.setColorText(colorText.orElseThrow(() -> new ParsingEmptyFieldException("colorText"))); // Точно надо.
++            car.setEngineModel(engineModel.orElse(""));
++            car.setEngineNumber(engineNumber.orElseThrow(() -> new ParsingEmptyFieldException("engineNumber"))); // Точно надо.
++            car.setEngineCapacity(Integer.parseInt(optionalEngineCapacity.orElseThrow(() -> new ParsingEmptyFieldException("engineCapacity")))); // Точно надо.
++            car.setEnginePower(Integer.parseInt(optionalEnginePower.orElseThrow(() -> new ParsingEmptyFieldException("enginePower")))); // Точно надо.
++            car.setEcoClass(ecoClass.orElse(""));
++            car.setWeight(Integer.parseInt(optionalWeight.orElseThrow(() -> new ParsingEmptyFieldException("weight")))); // Точно надо.
++            car.setMaxWeight(Integer.parseInt(optionalMaxWeight.orElseThrow(() -> new ParsingEmptyFieldException("maxWeight")))); // Точно надо.
++            car.setEraGlonassId(eraGlonassId.orElseThrow(() -> new ParsingEmptyFieldException("golonassId"))); // Точно надо.
++            car.setEcuModel(ecuModel.orElse(""));
++            car.setEngineNumberPlacing(engineNumberPlacing.orElseThrow(() -> new ParsingEmptyFieldException("numberPlacing"))); // Точно надо.
++            car.setLength(Integer.parseInt(optionalLength.orElse("-1")));
++            car.setWidth(Integer.parseInt(optionalWidth.orElse("-1")));
++            car.setHeight(Integer.parseInt(optionalHeight.orElse("-1")));
++            car.setWheelbase(Integer.parseInt(optionalWheelBase.orElse("-1")));
++            car.setTrack(track.orElse(""));
++            car.setTransmission(transmission.orElse(""));
++            car.setDrivetrain(drivetrain.orElse(""));
++            car.setTireSize(tireSize.orElse(""));
++            car.setTempTireSize(tempTireSize.orElse(""));
++            car.setAdditionalEquipment(additionalEquipment.orElse(""));
++            car.setOtts(otts.orElse(""));
++            car.setProductionCountry(productionCountry.orElseThrow(() -> new ParsingEmptyFieldException("productionCountry"))); // Точно надо.
++            car.setExportCountry(exportCountry.orElseThrow(() -> new ParsingEmptyFieldException("exportCountry"))); // Точно надо.
++            car.setSuspensionFront(suspensionFront.orElse(""));
++            car.setSuspensionRear(suspensionRear.orElse(""));
+ 
+-            GenericEpts genericEpts = new GenericEpts();
+-            genericEpts.setCarEpts(carEpts);
+-            genericEptsService.update(genericEpts);
++            carList.add(car);
+ 
+             i++;
+             row = sheet.getRow(i);
+         }
++        return carList;
+     }
+ }
+diff --git a/src/main/java/epts/ui/dialogs/specification/SpecificationCreatingPresenter.java b/src/main/java/epts/ui/dialogs/specification/SpecificationCreatingPresenter.java
+index ac4dc1747a205ebb20589c5191aecea621d60247..697513daf04a893b42ec7a90ec54fd1df7f6d749 100644
+--- a/src/main/java/epts/ui/dialogs/specification/SpecificationCreatingPresenter.java
++++ b/src/main/java/epts/ui/dialogs/specification/SpecificationCreatingPresenter.java
+@@ -4,6 +4,10 @@ import com.vaadin.flow.component.notification.NotificationVariant;
+ import com.vaadin.flow.spring.annotation.SpringComponent;
+ 
+ import epts.data.entity.Specification;
++import epts.data.entity.epts.CarEpts;
++import epts.data.entity.epts.GenericEpts;
++import epts.data.entity.transport.Car;
++import epts.data.entity.transport.GenericVehicle;
+ import epts.data.service.GenericVehicleService;
+ import epts.data.service.SpecificationService;
+ import epts.data.service.epts.CarEptsService;
+@@ -30,6 +34,7 @@ import java.io.IOException;
+ import java.io.InputStream;
+ import java.sql.Blob;
+ import java.sql.SQLException;
++import java.util.List;
+ 
+ @SpringComponent
+ @Scope(value = BeanDefinition.SCOPE_PROTOTYPE)
+@@ -73,7 +78,8 @@ public class SpecificationCreatingPresenter extends Presenter<SpecificationCreat
+         view.showNotification("Добавьте файл в формате .xls/xlsx", NotificationVariant.LUMO_ERROR);
+     }
+ 
+-    public void handleCreateClick(TransportType transportType, String name, String num, InputStream file, String fileName) {
++    public void handleCreateClick(TransportType transportType, String name, String num, InputStream file,
++                                  String fileName) {
+         Specification currentSpecification = new Specification();
+         currentSpecification.setDocumentFileName(fileName);
+         currentSpecification.setDocumentTitle(name);
+@@ -115,8 +121,23 @@ public class SpecificationCreatingPresenter extends Presenter<SpecificationCreat
+     }
+ 
+     private void addNewCarSpec(Specification specification) {
+-        new CarSpecificationParser(carService, genericVehicleService, carEptsService, genericEptsService)
+-                .parse(specification);
++        List<Car> carList = new CarSpecificationParser().parse(specification);
++        for (Car car : carList) {
++            Car carFromDB = carService.update(car);
++
++            GenericVehicle genericVehicle = new GenericVehicle();
++            genericVehicle.setCar(carFromDB);
++            genericVehicle.setSpecification(specification);
++            genericVehicleService.update(genericVehicle);
++
++            CarEpts carEpts = new CarEpts();
++            carEpts.setCar(carFromDB);
++            carEptsService.update(carEpts);
++
++            GenericEpts genericEpts = new GenericEpts();
++            genericEpts.setCarEpts(carEpts);
++            genericEptsService.update(genericEpts);
++        }
+     }
+ 
+     private void addNewTrailerSpec(Specification specification) {
+diff --git a/src/test/java/epts/data/service/specification/parsers/CarSpecificationParserTest.java b/src/test/java/epts/data/service/specification/parsers/CarSpecificationParserTest.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..459dcacebbd7a59b317f5156c44ad19a0b652c9f
+--- /dev/null
++++ b/src/test/java/epts/data/service/specification/parsers/CarSpecificationParserTest.java
+@@ -0,0 +1,323 @@
++package epts.data.service.specification.parsers;
++
++import java.io.IOException;
++import java.io.InputStream;
++import java.nio.file.Files;
++import java.nio.file.Path;
++import java.sql.Blob;
++import java.sql.SQLException;
++import java.util.List;
++
++import javax.sql.rowset.serial.SerialBlob;
++
++import org.junit.jupiter.api.Test;
++
++import epts.data.entity.Specification;
++import epts.data.entity.transport.Car;
++import epts.data.exceptions.ParsingEmptyFieldException;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++class CarSpecificationParserTest {
++
++    private static final Path folder = Path.of(System.getProperty("user.dir"), "src", "test", "resources", "CarSpecificationParserTestResources");
++
++    private Blob convertFileToBlob(InputStream stream) {
++        SerialBlob blob = null;
++        try {
++            byte[] content = stream.readAllBytes();
++            blob = new SerialBlob(content);
++        } catch (IOException | SQLException e) {
++            e.printStackTrace();
++        }
++        return blob;
++    }
++
++    private Specification getSpecification(String fileName) {
++        Specification currentSpecification = new Specification();
++        currentSpecification.setDocumentFileName("parsingFullRecord.xlsx");
++        currentSpecification.setDocumentTitle("test");
++        currentSpecification.setDocumentNumber(1);
++
++        Path file = folder.resolve(fileName);
++        InputStream is = null;
++        try {
++            is = Files.newInputStream(file);
++        } catch (IOException e) {
++            e.printStackTrace();
++        }
++        currentSpecification.setDocumentFile(convertFileToBlob(is));
++        return currentSpecification;
++    }
++
++    @Test
++    void parsingFullRecord() {
++        Car car = new Car();
++        car.setAutomaker("GEELY");
++        car.setModel("TUGELLA");
++        car.setType("FY11");
++        car.setTrim("HPBA4");
++        car.setSeatCount(1);
++        car.setVin("L6T7852D7MD095340");
++        car.setBodyId("L6T7852D7MD095340");
++        car.setFrameId("test");
++        car.setProductionYear(2021);
++        car.setProductionMonth(10);
++        car.setColor("9003");
++        car.setColorText("белый");
++        car.setEngineModel("test");
++        car.setEngineNumber("JLH4G20TDBM9TB2119404");
++        car.setEngineCapacity(1969);
++        car.setEnginePower(175);
++        car.setEcoClass("test");
++        car.setWeight(1815);
++        car.setMaxWeight(2115);
++        car.setEraGlonassId("8970177000087497338");
++        car.setEcuModel("test");
++        car.setEngineNumberPlacing("на блоке цилиндров двигателя");
++        car.setLength(1);
++        car.setWidth(2);
++        car.setHeight(3);
++        car.setWheelbase(4);
++        car.setTrack("test");
++        car.setTransmission("test");
++        car.setDrivetrain("test");
++        car.setTireSize("test");
++        car.setTempTireSize("test");
++        car.setAdditionalEquipment("test");
++        car.setOtts("test");
++        car.setProductionCountry("CN");
++        car.setExportCountry("CN");
++        car.setSuspensionFront("test");
++        car.setSuspensionRear("test");
++
++        Specification specification = getSpecification("parsingFullRecord.xlsx");
++        CarSpecificationParser parser = new CarSpecificationParser();
++        List<Car> list =  parser.parse(specification);
++
++        assertEquals(list.size(), 1);
++        assertEquals(car, list.get(0));
++    }
++
++    @Test
++    void multipleCars() {
++        Car car1 = new Car();
++        car1.setAutomaker("GEELY");
++        car1.setModel("TUGELLA");
++        car1.setType("FY11");
++        car1.setTrim("HPBA4");
++        car1.setSeatCount(1);
++        car1.setVin("L6T7852D7MD095340");
++        car1.setBodyId("L6T7852D7MD095340");
++        car1.setFrameId("test1");
++        car1.setProductionYear(2021);
++        car1.setProductionMonth(10);
++        car1.setColor("9003");
++        car1.setColorText("белый");
++        car1.setEngineModel("test");
++        car1.setEngineNumber("JLH4G20TDBM9TB2119404");
++        car1.setEngineCapacity(1969);
++        car1.setEnginePower(175);
++        car1.setEcoClass("test");
++        car1.setWeight(1815);
++        car1.setMaxWeight(2115);
++        car1.setEraGlonassId("8970177000087497338");
++        car1.setEcuModel("test");
++        car1.setEngineNumberPlacing("на блоке цилиндров двигателя");
++        car1.setLength(1);
++        car1.setWidth(2);
++        car1.setHeight(3);
++        car1.setWheelbase(4);
++        car1.setTrack("test");
++        car1.setTransmission("test");
++        car1.setDrivetrain("test");
++        car1.setTireSize("test");
++        car1.setTempTireSize("test");
++        car1.setAdditionalEquipment("test");
++        car1.setOtts("test");
++        car1.setProductionCountry("CN");
++        car1.setExportCountry("CN");
++        car1.setSuspensionFront("test");
++        car1.setSuspensionRear("test");
++
++        Car car2 = new Car();
++        car2.setAutomaker("GEELY");
++        car2.setModel("TUGELLA");
++        car2.setType("FY11");
++        car2.setTrim("HPBA4");
++        car2.setSeatCount(1);
++        car2.setVin("L6T7852D7MD095340");
++        car2.setBodyId("L6T7852D7MD095340");
++        car2.setFrameId("test2");
++        car2.setProductionYear(2021);
++        car2.setProductionMonth(10);
++        car2.setColor("9003");
++        car2.setColorText("белый");
++        car2.setEngineModel("test");
++        car2.setEngineNumber("JLH4G20TDBM9TB2119404");
++        car2.setEngineCapacity(1969);
++        car2.setEnginePower(175);
++        car2.setEcoClass("test");
++        car2.setWeight(1815);
++        car2.setMaxWeight(2115);
++        car2.setEraGlonassId("8970177000087497338");
++        car2.setEcuModel("test");
++        car2.setEngineNumberPlacing("на блоке цилиндров двигателя");
++        car2.setLength(1);
++        car2.setWidth(2);
++        car2.setHeight(3);
++        car2.setWheelbase(4);
++        car2.setTrack("test");
++        car2.setTransmission("test");
++        car2.setDrivetrain("test");
++        car2.setTireSize("test");
++        car2.setTempTireSize("test");
++        car2.setAdditionalEquipment("test");
++        car2.setOtts("test");
++        car2.setProductionCountry("CN");
++        car2.setExportCountry("CN");
++        car2.setSuspensionFront("test");
++        car2.setSuspensionRear("test");
++
++        Car car3 = new Car();
++        car3.setAutomaker("GEELY");
++        car3.setModel("TUGELLA");
++        car3.setType("FY11");
++        car3.setTrim("HPBA4");
++        car3.setSeatCount(1);
++        car3.setVin("L6T7852D7MD095340");
++        car3.setBodyId("L6T7852D7MD095340");
++        car3.setFrameId("test3");
++        car3.setProductionYear(2021);
++        car3.setProductionMonth(10);
++        car3.setColor("9003");
++        car3.setColorText("белый");
++        car3.setEngineModel("test");
++        car3.setEngineNumber("JLH4G20TDBM9TB2119404");
++        car3.setEngineCapacity(1969);
++        car3.setEnginePower(175);
++        car3.setEcoClass("test");
++        car3.setWeight(1815);
++        car3.setMaxWeight(2115);
++        car3.setEraGlonassId("8970177000087497338");
++        car3.setEcuModel("test");
++        car3.setEngineNumberPlacing("на блоке цилиндров двигателя");
++        car3.setLength(1);
++        car3.setWidth(2);
++        car3.setHeight(3);
++        car3.setWheelbase(4);
++        car3.setTrack("test");
++        car3.setTransmission("test");
++        car3.setDrivetrain("test");
++        car3.setTireSize("test");
++        car3.setTempTireSize("test");
++        car3.setAdditionalEquipment("test");
++        car3.setOtts("test");
++        car3.setProductionCountry("CN");
++        car3.setExportCountry("CN");
++        car3.setSuspensionFront("test");
++        car3.setSuspensionRear("test");
++
++        Specification specification = getSpecification("multipleCars.xlsx");
++        CarSpecificationParser parser = new CarSpecificationParser();
++        List<Car> list =  parser.parse(specification);
++
++        assertEquals(list.size(), 3);
++        assertEquals(car1, list.get(0));
++        assertEquals(car2, list.get(1));
++        assertEquals(car3, list.get(2));
++    }
++
++    private void testEmptyField(String fileName, String fieldName) {
++        Specification specification = getSpecification(fileName);
++        CarSpecificationParser parser = new CarSpecificationParser();
++        ParsingEmptyFieldException e = assertThrows(ParsingEmptyFieldException.class, () -> parser.parse(specification));
++        assertTrue(e.getMessage().contains(fieldName));
++    }
++
++    @Test
++    void emptyAutomaker() {
++        testEmptyField("emptyAutomaker.xlsx", "automaker");
++    }
++
++    @Test
++    void emptyModel() {
++        testEmptyField("emptyModel.xlsx", "model");
++    }
++
++    @Test
++    void emptyType() {
++        testEmptyField("emptyType.xlsx", "type");
++    }
++
++    @Test
++    void emptyVin() {
++        testEmptyField("emptyVin.xlsx", "vin");
++    }
++
++    @Test
++    void emptyBodyId() {
++        testEmptyField("emptyBodyId.xlsx", "bodyId");
++    }
++
++    @Test
++    void emptyProductionDate() {
++        testEmptyField("emptyProductionDate.xlsx", "productionDate");
++    }
++
++    @Test
++    void emptyColor() {
++        testEmptyField("emptyColor.xlsx", "color");
++    }
++
++    @Test
++    void emptyColorText() {
++        testEmptyField("emptyColorText.xlsx", "colorText");
++    }
++
++    @Test
++    void emptyEngineNumber() {
++        testEmptyField("emptyEngineNumber.xlsx", "engineNumber");
++    }
++
++    @Test
++    void emptyEngineCapacity() {
++        testEmptyField("emptyEngineCapacity.xlsx", "engineCapacity");
++    }
++
++    @Test
++    void emptyEnginePower() {
++        testEmptyField("emptyEnginePower.xlsx", "enginePower");
++    }
++
++    @Test
++    void emptyWeight() {
++        testEmptyField("emptyWeight.xlsx", "weight");
++    }
++
++    @Test
++    void emptyMaxWeight() {
++        testEmptyField("emptyMaxWeight.xlsx", "maxWeight");
++    }
++
++    @Test
++    void emptyGolonassId() {
++        testEmptyField("emptyGolonassId.xlsx", "golonassId");
++    }
++
++    @Test
++    void emptyNumberPlacing() {
++        testEmptyField("emptyNumberPlacing.xlsx", "numberPlacing");
++    }
++
++    @Test
++    void emptyProductionCountry() {
++        testEmptyField("emptyProductionCountry.xlsx", "productionCountry");
++    }
++
++    @Test
++    void emptyExportCountry() {
++        testEmptyField("emptyExportCountry.xlsx", "exportCountry");
++    }
++
++}
+\ No newline at end of file
+diff --git a/src/test/resources/CarSpecificationParserTestResources/emptyAutomaker.xlsx b/src/test/resources/CarSpecificationParserTestResources/emptyAutomaker.xlsx
+new file mode 100644
+index 0000000000000000000000000000000000000000..cab6dd936cccac78b1198e1978f562799c9cfed5
+Binary files /dev/null and b/src/test/resources/CarSpecificationParserTestResources/emptyAutomaker.xlsx differ
+diff --git a/src/test/resources/CarSpecificationParserTestResources/emptyBodyId.xlsx b/src/test/resources/CarSpecificationParserTestResources/emptyBodyId.xlsx
+new file mode 100644
+index 0000000000000000000000000000000000000000..877c3326b22a76499d66917dcf7abe74336cca76
+Binary files /dev/null and b/src/test/resources/CarSpecificationParserTestResources/emptyBodyId.xlsx differ
+diff --git a/src/test/resources/CarSpecificationParserTestResources/emptyColor.xlsx b/src/test/resources/CarSpecificationParserTestResources/emptyColor.xlsx
+new file mode 100644
+index 0000000000000000000000000000000000000000..376e367018dcf0654aa6957540b64ddf73b6bc08
+Binary files /dev/null and b/src/test/resources/CarSpecificationParserTestResources/emptyColor.xlsx differ
+diff --git a/src/test/resources/CarSpecificationParserTestResources/emptyColorText.xlsx b/src/test/resources/CarSpecificationParserTestResources/emptyColorText.xlsx
+new file mode 100644
+index 0000000000000000000000000000000000000000..64efd088b1e8161f45ea74e29d0d19e78803f487
+Binary files /dev/null and b/src/test/resources/CarSpecificationParserTestResources/emptyColorText.xlsx differ
+diff --git a/src/test/resources/CarSpecificationParserTestResources/emptyEngineCapacity.xlsx b/src/test/resources/CarSpecificationParserTestResources/emptyEngineCapacity.xlsx
+new file mode 100644
+index 0000000000000000000000000000000000000000..38604b932ec229349cbb084d452134515f1fac9b
+Binary files /dev/null and b/src/test/resources/CarSpecificationParserTestResources/emptyEngineCapacity.xlsx differ
+diff --git a/src/test/resources/CarSpecificationParserTestResources/emptyEngineNumber.xlsx b/src/test/resources/CarSpecificationParserTestResources/emptyEngineNumber.xlsx
+new file mode 100644
+index 0000000000000000000000000000000000000000..d6fa4077143431ae0ab8b0bedf94968dfdf9e48d
+Binary files /dev/null and b/src/test/resources/CarSpecificationParserTestResources/emptyEngineNumber.xlsx differ
+diff --git a/src/test/resources/CarSpecificationParserTestResources/emptyEnginePower.xlsx b/src/test/resources/CarSpecificationParserTestResources/emptyEnginePower.xlsx
+new file mode 100644
+index 0000000000000000000000000000000000000000..d5b7df0dd619e97f62f0a04f084788427f2fceb3
+Binary files /dev/null and b/src/test/resources/CarSpecificationParserTestResources/emptyEnginePower.xlsx differ
+diff --git a/src/test/resources/CarSpecificationParserTestResources/emptyExportCountry.xlsx b/src/test/resources/CarSpecificationParserTestResources/emptyExportCountry.xlsx
+new file mode 100644
+index 0000000000000000000000000000000000000000..5ccaa97840525cd5981b344c99e50a8ae4cb4162
+Binary files /dev/null and b/src/test/resources/CarSpecificationParserTestResources/emptyExportCountry.xlsx differ
+diff --git a/src/test/resources/CarSpecificationParserTestResources/emptyGolonassId.xlsx b/src/test/resources/CarSpecificationParserTestResources/emptyGolonassId.xlsx
+new file mode 100644
+index 0000000000000000000000000000000000000000..04c37cc9b5ea4f6aa4c04568e6cfbda96e10c010
+Binary files /dev/null and b/src/test/resources/CarSpecificationParserTestResources/emptyGolonassId.xlsx differ
+diff --git a/src/test/resources/CarSpecificationParserTestResources/emptyMaxWeight.xlsx b/src/test/resources/CarSpecificationParserTestResources/emptyMaxWeight.xlsx
+new file mode 100644
+index 0000000000000000000000000000000000000000..6fd9575f659c1f300940dd9ae935ce1a56feb6ee
+Binary files /dev/null and b/src/test/resources/CarSpecificationParserTestResources/emptyMaxWeight.xlsx differ
+diff --git a/src/test/resources/CarSpecificationParserTestResources/emptyModel.xlsx b/src/test/resources/CarSpecificationParserTestResources/emptyModel.xlsx
+new file mode 100644
+index 0000000000000000000000000000000000000000..d33b4afa04366c3d2e12e40d7c9059b4e44733f0
+Binary files /dev/null and b/src/test/resources/CarSpecificationParserTestResources/emptyModel.xlsx differ
+diff --git a/src/test/resources/CarSpecificationParserTestResources/emptyNumberPlacing.xlsx b/src/test/resources/CarSpecificationParserTestResources/emptyNumberPlacing.xlsx
+new file mode 100644
+index 0000000000000000000000000000000000000000..b4c054a38deafea35fe79ffd9dc9a0ab38312ebd
+Binary files /dev/null and b/src/test/resources/CarSpecificationParserTestResources/emptyNumberPlacing.xlsx differ
+diff --git a/src/test/resources/CarSpecificationParserTestResources/emptyProductionCountry.xlsx b/src/test/resources/CarSpecificationParserTestResources/emptyProductionCountry.xlsx
+new file mode 100644
+index 0000000000000000000000000000000000000000..f696140d96c9fcfc36419ffdd55fd40cdabbb399
+Binary files /dev/null and b/src/test/resources/CarSpecificationParserTestResources/emptyProductionCountry.xlsx differ
+diff --git a/src/test/resources/CarSpecificationParserTestResources/emptyProductionDate.xlsx b/src/test/resources/CarSpecificationParserTestResources/emptyProductionDate.xlsx
+new file mode 100644
+index 0000000000000000000000000000000000000000..f6a473932c4f863efa68ab9f62610e16f184fe80
+Binary files /dev/null and b/src/test/resources/CarSpecificationParserTestResources/emptyProductionDate.xlsx differ
+diff --git a/src/test/resources/CarSpecificationParserTestResources/emptyType.xlsx b/src/test/resources/CarSpecificationParserTestResources/emptyType.xlsx
+new file mode 100644
+index 0000000000000000000000000000000000000000..69c4203dc666607a195761411a4e96106173e45c
+Binary files /dev/null and b/src/test/resources/CarSpecificationParserTestResources/emptyType.xlsx differ
+diff --git a/src/test/resources/CarSpecificationParserTestResources/emptyVin.xlsx b/src/test/resources/CarSpecificationParserTestResources/emptyVin.xlsx
+new file mode 100644
+index 0000000000000000000000000000000000000000..7a3e049728784a60cbb2cf75e82b64330ffa2146
+Binary files /dev/null and b/src/test/resources/CarSpecificationParserTestResources/emptyVin.xlsx differ
+diff --git a/src/test/resources/CarSpecificationParserTestResources/emptyWeight.xlsx b/src/test/resources/CarSpecificationParserTestResources/emptyWeight.xlsx
+new file mode 100644
+index 0000000000000000000000000000000000000000..c25a62519755fb6b979825cde7b1bd1d5c067227
+Binary files /dev/null and b/src/test/resources/CarSpecificationParserTestResources/emptyWeight.xlsx differ
+diff --git a/src/test/resources/CarSpecificationParserTestResources/multipleCars.xlsx b/src/test/resources/CarSpecificationParserTestResources/multipleCars.xlsx
+new file mode 100644
+index 0000000000000000000000000000000000000000..a64a8d49154e10e59eab529293977fbc52d77b05
+Binary files /dev/null and b/src/test/resources/CarSpecificationParserTestResources/multipleCars.xlsx differ
+diff --git a/src/test/resources/CarSpecificationParserTestResources/parsingFullRecord.xlsx b/src/test/resources/CarSpecificationParserTestResources/parsingFullRecord.xlsx
+new file mode 100644
+index 0000000000000000000000000000000000000000..8fca91770b252266780fa452cb8afc166219e99a
+Binary files /dev/null and b/src/test/resources/CarSpecificationParserTestResources/parsingFullRecord.xlsx differ

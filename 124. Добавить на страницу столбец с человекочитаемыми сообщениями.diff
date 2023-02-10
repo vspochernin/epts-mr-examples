@@ -1,0 +1,220 @@
+diff --git a/src/main/java/epts/data/entity/Request.java b/src/main/java/epts/data/entity/Request.java
+index e10b5888d3f4d783b6ae4b450d1c8e2894f78fdd..dfdf9f21ed1167e31b4ee1e16f98f66ab2b79463 100644
+--- a/src/main/java/epts/data/entity/Request.java
++++ b/src/main/java/epts/data/entity/Request.java
+@@ -1,12 +1,32 @@
+ package epts.data.entity;
+ 
+ import com.fasterxml.jackson.annotation.JsonManagedReference;
++
++import epts.data.service.api.ElptsService;
++import epts.ui.utils.XmlHandler;
+ import lombok.Getter;
+ import lombok.Setter;
+ import org.hibernate.annotations.Type;
++import org.w3c.dom.Document;
++import org.w3c.dom.Node;
++import org.w3c.dom.NodeList;
++import org.xml.sax.InputSource;
++import org.xml.sax.SAXException;
++
+ import epts.data.entity.epts.GenericEpts;
+ 
+ import javax.persistence.*;
++import javax.xml.parsers.DocumentBuilder;
++import javax.xml.parsers.DocumentBuilderFactory;
++import javax.xml.parsers.ParserConfigurationException;
++import javax.xml.xpath.XPath;
++import javax.xml.xpath.XPathConstants;
++import javax.xml.xpath.XPathExpressionException;
++import javax.xml.xpath.XPathFactory;
++
++import java.io.ByteArrayInputStream;
++import java.io.IOException;
++import java.nio.charset.StandardCharsets;
+ import java.sql.Timestamp;
+ import java.util.UUID;
+ 
+@@ -35,4 +55,38 @@ public class Request {
+     private String requestXml;
+     @Column(columnDefinition = "text")
+     private String responseXml;
++
++    public String getInfo() {
++        if (responseXml == null) {
++            return "Отсутствует ответ сервера";
++        }
++
++        Document document = null;
++        try {
++            document = XmlHandler.getDocument(responseXml);
++        } catch (ParserConfigurationException | IOException | SAXException e) {
++            e.printStackTrace();
++        }
++
++        XPath xPath = XPathFactory.newInstance().newXPath();
++        try {
++            NodeList errorNodes = (NodeList) xPath.compile("//*[contains(local-name(),'ErrorData')]").evaluate(document, XPathConstants.NODESET);
++            if (errorNodes.getLength() > 0) {
++                StringBuilder sb = new StringBuilder().append("Ошибка: ");
++                for (int i = 0; i < errorNodes.getLength(); i++) {
++                    sb.append(errorNodes.item(i).getTextContent())
++                            .append("; ");
++                }
++                return sb.toString();
++            }
++            Node passportNode = (Node) xPath.compile("//*[contains(name(),'doc:passportResponse')]").evaluate(document, XPathConstants.NODE);
++            if (passportNode != null) {
++                return "Паспорт: " + XmlHandler.getPassportInfo(passportNode);
++            }
++        } catch (XPathExpressionException e) {
++            e.printStackTrace();
++        }
++
++        return "Запрос отправлен";
++    }
+ }
+diff --git a/src/main/java/epts/data/repositories/RequestRepository.java b/src/main/java/epts/data/repositories/RequestRepository.java
+index e01d0ecadaa42dbfa2bae174b584f3be67731c6f..dc913f53b941a34a7436987b5efd7cf4db594412 100644
+--- a/src/main/java/epts/data/repositories/RequestRepository.java
++++ b/src/main/java/epts/data/repositories/RequestRepository.java
+@@ -1,6 +1,9 @@
+ package epts.data.repositories;
+ 
+ import epts.data.entity.Request;
++
++import org.springframework.data.domain.Page;
++import org.springframework.data.domain.PageRequest;
+ import org.springframework.data.domain.Pageable;
+ import org.springframework.data.jpa.repository.JpaRepository;
+ import org.springframework.data.jpa.repository.Query;
+@@ -17,4 +20,6 @@ public interface RequestRepository extends JpaRepository<Request, Long> {
+ 
+     @Query(value = FIND_ALL_REQUESTS_FOR_TRUCK_VALUE, nativeQuery = true)
+     List<Request> findAllRequestsForTruck(long id, Pageable pageable);
++
++    List<Request> findAllByOrderByIdDesc(Pageable pageable);
+ }
+\ No newline at end of file
+diff --git a/src/main/java/epts/data/service/RequestService.java b/src/main/java/epts/data/service/RequestService.java
+index 0dda2c58d3905a44a702a407164f8418f85e0083..6127adb34d846d5c2ae8c2b22fa8368c18166f78 100644
+--- a/src/main/java/epts/data/service/RequestService.java
++++ b/src/main/java/epts/data/service/RequestService.java
+@@ -19,7 +19,7 @@ public class RequestService extends CrudService<Request, Long> {
+     }
+ 
+     public Stream<Request> getRequests(int page, int pageSize) {
+-        return this.getRepository().findAll(PageRequest.of(page, pageSize)).get();
++        return this.getRepository().findAllByOrderByIdDesc(PageRequest.of(page, pageSize)).stream();
+     }
+ 
+     @Override
+diff --git a/src/main/java/epts/ui/utils/XmlHandler.java b/src/main/java/epts/ui/utils/XmlHandler.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..f6612f9c3ca63390041afbe7a5c3b58fcd135106
+--- /dev/null
++++ b/src/main/java/epts/ui/utils/XmlHandler.java
+@@ -0,0 +1,60 @@
++package epts.ui.utils;
++
++import java.io.ByteArrayInputStream;
++import java.io.IOException;
++import java.nio.charset.StandardCharsets;
++import java.util.HashMap;
++
++import javax.xml.parsers.DocumentBuilder;
++import javax.xml.parsers.DocumentBuilderFactory;
++import javax.xml.parsers.ParserConfigurationException;
++
++import org.w3c.dom.Document;
++import org.w3c.dom.Node;
++import org.w3c.dom.NodeList;
++import org.xml.sax.InputSource;
++import org.xml.sax.SAXException;
++
++public class XmlHandler {
++
++    public static Document getDocument(String xmlResponse) throws ParserConfigurationException, IOException, SAXException {
++        DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
++        DocumentBuilder builder = factory.newDocumentBuilder();
++        return builder.parse(new InputSource(new ByteArrayInputStream(xmlResponse.getBytes(StandardCharsets.UTF_8))));
++    }
++
++    public static StringBuilder getErrorString(NodeList errorNodes) {
++        StringBuilder errorString = new StringBuilder();
++        for (int i = 0; i < errorNodes.getLength(); i++) {
++
++            Node node = errorNodes.item(i);
++            NodeList childNodes = node.getChildNodes();
++            HashMap<String, String> errorMap = new HashMap<>();
++
++            for (int j = 0; j < childNodes.getLength(); j++) {
++                Node childNode = childNodes.item(j);
++
++                if (childNode.getLocalName() != null) {
++                    errorMap.put(childNode.getLocalName(), childNode.getTextContent());
++                }
++            }
++
++            errorString.append(errorMap.get("ErrorCode" + "; " + errorMap.get("ErrorText")));
++
++            if (errorMap.get("ErrorDetails") != null) {
++                errorString.append("; ").append(errorMap.get("ErrorDetails"));
++            }
++        }
++
++        return errorString;
++    }
++
++    public static String getPassportInfo(Node passportNode) {
++        StringBuilder message = new StringBuilder();
++        for (int i = 0; i < passportNode.getChildNodes().getLength() - 1; i++) {
++            message.append(passportNode.getChildNodes().item(i).getNodeName()).append(": ")
++                    .append(passportNode.getChildNodes().item(i).getTextContent()).append("; ");
++        }
++        return message.toString();
++    }
++}
+diff --git a/src/main/java/epts/ui/utils/gridcreators/RequestGridCreator.java b/src/main/java/epts/ui/utils/gridcreators/RequestGridCreator.java
+index bccdec1f8eb4e7ab64a850fa632e8554877ece31..542fbb3cbd2e8106912e05ae20e43fa703ada39f 100644
+--- a/src/main/java/epts/ui/utils/gridcreators/RequestGridCreator.java
++++ b/src/main/java/epts/ui/utils/gridcreators/RequestGridCreator.java
+@@ -22,9 +22,9 @@ public class RequestGridCreator extends GridCreator<Request> {
+                 .setKey("requestType")
+                 .setResizable(true)
+                 .setAutoWidth(true);
+-        grid.addColumn(Request::getStatus)
+-                .setHeader(grid.getTranslation("status"))
+-                .setKey("status")
++        grid.addColumn(Request::getInfo)
++                .setHeader(grid.getTranslation("info"))
++                .setKey("info")
+                 .setResizable(true)
+                 .setAutoWidth(true);
+         return grid;
+diff --git a/src/main/resources/localization_en.properties b/src/main/resources/localization_en.properties
+index 7329735ce6d2f672b0986cca3de3e1108dd8b2d4..c450077da10bc4f8d52c074eaa6d57bf841c136b 100644
+--- a/src/main/resources/localization_en.properties
++++ b/src/main/resources/localization_en.properties
+@@ -90,7 +90,7 @@ name=Companies
+ #REQUEST GRID
+ queueUuid=queueUuid
+ requestType=requestType
+-status=Status
++info=Request information
+ 
+ #TEMPLATE GRID
+ templateName=Name
+diff --git a/src/main/resources/localization_ru.properties b/src/main/resources/localization_ru.properties
+index 7a9d6b6b297e996da88faee871a7c79e85278e79..c63ff265d6bd1188ea9c95e0a04213b8733d9d2c 100644
+--- a/src/main/resources/localization_ru.properties
++++ b/src/main/resources/localization_ru.properties
+@@ -92,7 +92,7 @@ name=Компании
+ #REQUEST GRID
+ queueUuid=Номер в очереди
+ requestType=Тип запроса
+-status=Статус
++info=Информация о запросе
+ 
+ #TEMPLATE GRID
+ templateName=Название

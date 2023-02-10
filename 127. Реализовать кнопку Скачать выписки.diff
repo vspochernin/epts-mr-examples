@@ -1,0 +1,1083 @@
+diff --git a/src/main/java/epts/data/entity/Extract.java b/src/main/java/epts/data/entity/Extract.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..bfc56fe85b736ca0a416446be78389dc08c5491a
+--- /dev/null
++++ b/src/main/java/epts/data/entity/Extract.java
+@@ -0,0 +1,39 @@
++package epts.data.entity;
++
++import java.sql.Timestamp;
++import java.util.UUID;
++
++import javax.persistence.Column;
++import javax.persistence.Entity;
++import javax.persistence.Id;
++import javax.persistence.Table;
++
++import org.hibernate.annotations.Type;
++
++import lombok.Getter;
++import lombok.Setter;
++
++@Entity
++@Table(name = "epts_extract")
++@Getter
++@Setter
++public class Extract {
++
++    @Id
++    private Long passportNumber;
++
++    @Type(type = "pg-uuid")
++    private UUID queueUuid;
++    private Timestamp xmlRequestOn;
++    @Column(columnDefinition = "text")
++    private String xmlRequest;
++    @Column(columnDefinition = "text")
++    private String xmlResponse;
++    private Timestamp pollRequestOn;
++    @Column(columnDefinition = "text")
++    private String pollRequest;
++    @Column(columnDefinition = "text")
++    private String pollResponse;
++    @Column(columnDefinition = "text")
++    private String status;
++}
+diff --git a/src/main/java/epts/data/entity/Request.java b/src/main/java/epts/data/entity/Request.java
+index 04ac922e6663a6b286077a3c8493bd3530ce8eb4..9cf0f98039c9f538bb902807e67dec20def3a290 100644
+--- a/src/main/java/epts/data/entity/Request.java
++++ b/src/main/java/epts/data/entity/Request.java
+@@ -83,6 +83,10 @@ public class Request {
+             if (passportNode != null) {
+                 return "Паспорт: " + XmlHandler.getPassportInfo(passportNode);
+             }
++            Node extractNode = (Node) xPath.compile("//*[contains(name(),'doc:R019VehicleEPassportExtractResponse')]").evaluate(document, XPathConstants.NODE);
++            if (extractNode != null) {
++                return "Выписка получена";
++            }
+             Node revocationNode = (Node) xPath.compile("//*[contains(name(),'doc:StatementStatus')]").evaluate(document, XPathConstants.NODE);
+             if (revocationNode != null) {
+                 return "Статус рассмотрения заявления об аннулировании: " + revocationNode.getTextContent();
+diff --git a/src/main/java/epts/data/repositories/ExtractRepository.java b/src/main/java/epts/data/repositories/ExtractRepository.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..52dd1b0632100ed2e768ed95e03c88a497578e8c
+--- /dev/null
++++ b/src/main/java/epts/data/repositories/ExtractRepository.java
+@@ -0,0 +1,9 @@
++package epts.data.repositories;
++
++import org.springframework.data.jpa.repository.JpaRepository;
++
++import epts.data.entity.Extract;
++
++public interface ExtractRepository extends JpaRepository<Extract, Long> {
++
++}
+\ No newline at end of file
+diff --git a/src/main/java/epts/data/service/ExtractService.java b/src/main/java/epts/data/service/ExtractService.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..1bfb19c0287f37807032fc38c2688281395b0e29
+--- /dev/null
++++ b/src/main/java/epts/data/service/ExtractService.java
+@@ -0,0 +1,29 @@
++package epts.data.service;
++
++import epts.data.entity.Extract;
++import epts.data.repositories.ExtractRepository;
++import org.springframework.beans.factory.annotation.Autowired;
++import org.springframework.data.domain.PageRequest;
++import org.springframework.stereotype.Service;
++import org.vaadin.artur.helpers.CrudService;
++
++import java.util.stream.Stream;
++
++@Service
++public class ExtractService extends CrudService<Extract, Long> {
++
++    private final ExtractRepository repository;
++
++    public ExtractService(@Autowired ExtractRepository repository) {
++        this.repository = repository;
++    }
++
++    public Stream<Extract> getExtracts(int page, int pageSize) {
++        return this.getRepository().findAll(PageRequest.of(page, pageSize)).stream();
++    }
++
++    @Override
++    protected ExtractRepository getRepository() {
++        return repository;
++    }
++}
+diff --git a/src/main/java/epts/data/service/api/ElptsService.java b/src/main/java/epts/data/service/api/ElptsService.java
+index f6c876243bd8873b7da86cff270b125cb7626bf1..5348f276a1672bb14e0e430022836c3592cf2137 100644
+--- a/src/main/java/epts/data/service/api/ElptsService.java
++++ b/src/main/java/epts/data/service/api/ElptsService.java
+@@ -1,11 +1,14 @@
+ package epts.data.service.api;
+ 
++import epts.data.entity.Extract;
+ import epts.data.entity.Request;
+ import epts.data.entity.epts.GenericEpts;
+ import epts.data.entity.transport.Car;
++import epts.data.repositories.ExtractRepository;
+ import epts.data.repositories.GenericEptsRepository;
+ import epts.data.repositories.RequestRepository;
+ import epts.data.service.epts.GenericEptsService;
++import epts.data.service.merger.builder.ExtractBuilder;
+ import epts.data.service.merger.builder.RevocationBuilder;
+ import epts.ui.utils.XmlHandler;
+ import jakarta.xml.bind.JAXBException;
+@@ -41,13 +44,14 @@ import java.nio.charset.StandardCharsets;
+ import java.nio.file.Files;
+ import java.nio.file.Path;
+ import java.sql.Timestamp;
+-import java.util.HashMap;
++import java.util.Optional;
+ import java.util.UUID;
+ 
+ @Service
+ public class ElptsService {
+ 
+     private final RequestRepository requestRepository;
++    private final ExtractRepository extractRepository;
+ 
+     private final GenericEptsRepository genericEptsRepository;
+ 
+@@ -56,15 +60,20 @@ public class ElptsService {
+     private final GenericEptsService genericEptsService;
+ 
+     public ElptsService(@Autowired RequestRepository requestRepository,
++                        @Autowired ExtractRepository extractRepository,
+                         @Autowired GenericEptsRepository genericEptsRepository,
+                         @Autowired GenericEptsService genericEptsService) {
+         this.requestRepository = requestRepository;
++        this.extractRepository = extractRepository;
+         this.genericEptsRepository = genericEptsRepository;
+         this.genericEptsService = genericEptsService;
+     }
+ 
+     public void sendXml(long id, String xml, String requestType) {
+-        GenericEpts genericEpts = genericEptsRepository.findById(id).orElseThrow();
++        GenericEpts genericEpts = null;
++        if (requestType != "eptsExtract") {
++            genericEpts = genericEptsRepository.findById(id).orElseThrow();
++        }
+         Request request = new Request();
+ 
+         String signedXml;
+@@ -97,6 +106,22 @@ public class ElptsService {
+             // Парсинг номера очереди из полученной xml.
+             Node queueNode = (Node) xPath.compile("//*[contains(local-name(),'QueueID')]").evaluate(document, XPathConstants.NODE);
+             String queueUuid = queueNode.getTextContent();
++            if (requestType == "eptsExtract") {
++                Optional<Extract> extractOptional = extractRepository.findById(id);
++                Extract extract;
++                if (!extractOptional.isPresent()) {
++                    extract = new Extract();
++                    extract.setPassportNumber(id);
++                } else {
++                    extract = extractOptional.get();
++                }
++                extract.setQueueUuid(UUID.fromString(queueUuid));
++                extract.setXmlRequestOn(request.getRequestOn());
++                extract.setXmlRequest(signedXml);
++                extract.setXmlResponse(xmlResponse);
++                extract.setStatus("Выписка запрошена");
++                extractRepository.save(extract);
++            }
+ 
+             // Установка номера очереди в запись запроса.
+             request.setQueueUuid(UUID.fromString(queueUuid));
+@@ -104,9 +129,11 @@ public class ElptsService {
+             Request savedRequest = requestRepository.save(request);
+ 
+             // Установка id и статуса запроса в обрабатываемый genericEpts.
+-            genericEpts.setCreateRequestId(savedRequest.getId());
+-            genericEpts.setStatus("Запрошен");
+-            genericEptsRepository.save(genericEpts);
++            if (requestType != "eptsExtract") {
++                genericEpts.setCreateRequestId(savedRequest.getId());
++                genericEpts.setStatus("Запрошен");
++                genericEptsRepository.save(genericEpts);
++            }
+         } catch (XPathExpressionException e) {
+             // Запись ошибок.
+             NodeList errorNodes;
+@@ -130,9 +157,16 @@ public class ElptsService {
+     }
+ 
+     public Request sendPoll(long id, String requestType) {
+-        Request request = requestRepository.findById(id).orElseThrow();
++        Request request = new Request();
++        Extract extract = new Extract();
++        if (requestType == "eptsExtract") {
++            extract = extractRepository.findById(id).orElseThrow();
++            request.setQueueUuid(extract.getQueueUuid());
++        } else {
++            request = requestRepository.findById(id).orElseThrow();
++        }
+ 
+-        if (request.getQueueUuid() == null) {
++        if (requestType != "eptsExtract" && request.getQueueUuid() == null) {
+             request.setRequestOn(new Timestamp(System.currentTimeMillis()));
+             request.setRequestType("pollRequest");
+             request.setStatus("The queue with the specified number was not found");
+@@ -145,6 +179,8 @@ public class ElptsService {
+                 requestString = getPollXml("src/main/resources/release_poll_1.xml", "src/main/resources/release_poll_2.xml", request);
+             } else if (requestType.equals("eptsRevocation")) {
+                 requestString = getPollXml("src/main/resources/annul_poll_1.xml", "src/main/resources/annul_poll_2.xml", request);
++            } else if (requestType.equals("eptsExtract")) {
++                requestString = getPollXml("src/main/resources/extract_poll_1.xml", "src/main/resources/extract_poll_2.xml", request);
+             }
+ 
+             String signedXml;
+@@ -191,6 +227,8 @@ public class ElptsService {
+                         expression = "//*[contains(name(),'doc:passportResponse')]";
+                     } else if (requestType.equals("eptsRevocation")) {
+                         expression = "//*[contains(name(),'doc:ELPTSRevocationResponse')]";
++                    } else if (requestType.equals("eptsExtract")) {
++                        expression = "//*[contains(name(),'doc:R019VehicleEPassportExtractResponse')]";
+                     }
+                     Node passportNode = (Node) xPath.compile(expression)
+                             .evaluate(document, XPathConstants.NODE);
+@@ -201,27 +239,31 @@ public class ElptsService {
+                                 .append(passportNode.getChildNodes().item(i).getTextContent()).append(",");
+                     }
+                     pollRequest.setStatus(message.toString());
+-
+                 } else {
+                     pollRequest.setStatus(XmlHandler.getErrorString(errorNodes).toString());
+                 }
+ 
+                 Request savedPollRequest = requestRepository.save(pollRequest);
+ 
+-                GenericEpts genericEpts = request.getGenericEpts();
+-                genericEpts.setPollRequestId(savedPollRequest.getId());
+-                genericEptsRepository.save(genericEpts);
++                if (requestType != "eptsExtract") {
++                    GenericEpts genericEpts = request.getGenericEpts();
++                    genericEpts.setPollRequestId(savedPollRequest.getId());
++                    genericEptsRepository.save(genericEpts);
++                } else {
++                    extract.setPollRequestOn(pollRequest.getRequestOn());
++                    extract.setPollRequest(signedXml);
++                    extract.setPollResponse(xmlResponse);
++                    extract.setStatus("Выписка получена");
++                    extractRepository.save(extract);
++                }
+ 
+                 return pollRequest;
+-
+             } catch (XPathExpressionException e) {
+                 e.printStackTrace();
+                 request.setStatus(e.toString());
+                 requestRepository.save(request);
+                 return request;
+             }
+-
+-
+         }
+     }
+ 
+@@ -235,13 +277,12 @@ public class ElptsService {
+         return sendPoll(id, "eptsAddData");
+     }
+ 
+-    public void sendAnnulXml(long id, Car car, String reason) {
+-        // TODO: (extra variable "car").
++    public void sendAnnulXml(long id, String passportNumber, String reason) {
+         // Получение xml для аннулирования.
+         RevocationBuilder revocationBuilder = new RevocationBuilder();
+         String xml = "";
+         try {
+-            xml = revocationBuilder.buildRevocation(car, reason);
++            xml = revocationBuilder.buildRevocation(passportNumber, reason);
+         } catch (JAXBException | ParserConfigurationException | SAXException | IOException | TransformerException e) {
+             e.printStackTrace();
+         }
+@@ -253,6 +294,21 @@ public class ElptsService {
+         sendPoll(id, "eptsRevocation");
+     }
+ 
++    public void sendExtractXml(String passportNumber) {
++        // Получение xml для выписки.
++        ExtractBuilder extractBuilder = new ExtractBuilder();
++        String xml = "";
++        try {
++            xml = extractBuilder.buildExtract(passportNumber);
++        } catch (JAXBException | ParserConfigurationException | IOException | TransformerException | SAXException e) {
++            e.printStackTrace();
++        }
++        sendXml(Long.parseLong(passportNumber), xml, "eptsExtract");
++    }
++
++    public void sendExtractPoll(long id) {
++        sendPoll(id, "eptsExtract");
++    }
+ 
+     private Document getDocument(String xmlResponse) throws ParserConfigurationException, IOException, SAXException {
+         DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
+diff --git a/src/main/java/epts/data/service/merger/XmlMerger.java b/src/main/java/epts/data/service/merger/XmlMerger.java
+index a86e924ec2afac8cdf1ef903412b8e3483f7a622..579b7f7ec26476601ed72e9ae6712e86160f277c 100644
+--- a/src/main/java/epts/data/service/merger/XmlMerger.java
++++ b/src/main/java/epts/data/service/merger/XmlMerger.java
+@@ -30,7 +30,7 @@ public class XmlMerger {
+         doc.getDocumentElement().normalize();
+ 
+         NodeList nodesToInsert = additionalDoc.getElementsByTagName(tagName).item(0).getChildNodes();
+-        NodeList whereToInsert = doc.getElementsByTagName("doc:ELPTSRevocationRequest");
++        NodeList whereToInsert = doc.getElementsByTagName(tagName);
+ 
+         for (int i = 0; i < nodesToInsert.getLength(); i++) {
+             Node importedNode = doc.importNode(nodesToInsert.item(i), true);
+diff --git a/src/main/java/epts/data/service/merger/beans/R019VehicleEPassportExtractRequest.java b/src/main/java/epts/data/service/merger/beans/R019VehicleEPassportExtractRequest.java
+index ac738638ff2f34c7db3df1de768412e945dfb18f..558ae785effe80a9bdfb0956fab30f3680090fe4 100644
+--- a/src/main/java/epts/data/service/merger/beans/R019VehicleEPassportExtractRequest.java
++++ b/src/main/java/epts/data/service/merger/beans/R019VehicleEPassportExtractRequest.java
+@@ -12,12 +12,8 @@ import lombok.Setter;
+ @XmlRootElement(name = "R019VehicleEPassportExtractRequest", namespace = XmlNamespaces.doc)
+ public class R019VehicleEPassportExtractRequest {
+ 
+-    @XmlElement(namespace = XmlNamespaces.trsdo, name = "VehicleEPassportKindCode")
+-    private int vehicleEPassportKindCode;
+     @XmlElement(namespace = XmlNamespaces.trsdo, name = "VehicleEPassportId")
+     private String vehicleEPassportId;
+-    @XmlElement(namespace = XmlNamespaces.doc, name = "VehicleIdInfoDetails")
+-    private VehicleIdInfoDetails vehicleIdInfoDetails = new VehicleIdInfoDetails();
+     @XmlElement(namespace = XmlNamespaces.doc, name = "ExtractType")
+     private boolean extractType = false;
+ }
+\ No newline at end of file
+diff --git a/src/main/java/epts/data/service/merger/builder/ExtractBuilder.java b/src/main/java/epts/data/service/merger/builder/ExtractBuilder.java
+index dfd58d3fb8c63c0921dc6ab6966edf645e64af92..21839b17c7ef8310e4296c1b3fdd3572c37fa41a 100644
+--- a/src/main/java/epts/data/service/merger/builder/ExtractBuilder.java
++++ b/src/main/java/epts/data/service/merger/builder/ExtractBuilder.java
+@@ -1,6 +1,5 @@
+ package epts.data.service.merger.builder;
+ 
+-import epts.data.entity.transport.Car;
+ import epts.data.service.merger.XmlMerger;
+ import epts.data.service.merger.beans.R019VehicleEPassportExtractRequest;
+ import epts.data.service.merger.convert.ExtractSerializer;
+@@ -26,14 +25,14 @@ public class ExtractBuilder {
+ 
+     static {
+         try {
+-            signFile = Files.readString(Path.of("src/main/resources/xml_to_sign_production.xml"), StandardCharsets.UTF_8);
++            signFile = Files.readString(Path.of("src/main/resources/xml_to_sign_extract.xml"), StandardCharsets.UTF_8);
+         } catch (IOException e) {
+             e.printStackTrace();
+         }
+     }
+ 
+-    public String buildExtract(Car car) throws JAXBException, ParserConfigurationException, TransformerException, IOException, SAXException {
+-        CarExtractRequestXmlFiller filler = new CarExtractRequestXmlFiller(car, new R019VehicleEPassportExtractRequest());
++    public String buildExtract(String passportNumber) throws JAXBException, ParserConfigurationException, TransformerException, IOException, SAXException {
++        CarExtractRequestXmlFiller filler = new CarExtractRequestXmlFiller(passportNumber, new R019VehicleEPassportExtractRequest());
+         filler.fillExtract();
+         R019VehicleEPassportExtractRequest requestClass = filler.getRequest();
+         Document requestXml = new ExtractSerializer().serialize(requestClass);
+diff --git a/src/main/java/epts/data/service/merger/builder/RevocationBuilder.java b/src/main/java/epts/data/service/merger/builder/RevocationBuilder.java
+index c1b379920dd80ddd4a39f6d80390cf7ef4187392..cb53285be4872edd872a83bddd63c30872f2626e 100644
+--- a/src/main/java/epts/data/service/merger/builder/RevocationBuilder.java
++++ b/src/main/java/epts/data/service/merger/builder/RevocationBuilder.java
+@@ -1,6 +1,5 @@
+ package epts.data.service.merger.builder;
+ 
+-import epts.data.entity.transport.Car;
+ import epts.data.service.merger.XmlMerger;
+ import epts.data.service.merger.annul_beans.ELPTSRevocationRequest;
+ import epts.data.service.merger.convert.RevocationSerializer;
+@@ -32,8 +31,8 @@ public class RevocationBuilder {
+         }
+     }
+ 
+-    public String buildRevocation(Car car, String reason) throws JAXBException, ParserConfigurationException, TransformerException, IOException, SAXException {
+-        CarRevocationRequestXmlFiller filler = new CarRevocationRequestXmlFiller(car, new ELPTSRevocationRequest());
++    public String buildRevocation(String passportNumber, String reason) throws JAXBException, ParserConfigurationException, TransformerException, IOException, SAXException {
++        CarRevocationRequestXmlFiller filler = new CarRevocationRequestXmlFiller(passportNumber, new ELPTSRevocationRequest());
+         filler.fillExtract(reason);
+         ELPTSRevocationRequest requestClass = filler.getRequest();
+         Document requestXml = new RevocationSerializer().serialize(requestClass);
+diff --git a/src/main/java/epts/data/service/merger/filler/CarExtractRequestXmlFiller.java b/src/main/java/epts/data/service/merger/filler/CarExtractRequestXmlFiller.java
+index 2d979fe2489a54d900d6fc9e5db9bc2de460349f..ee4964c60e0f8761464ba6266104345094684c20 100644
+--- a/src/main/java/epts/data/service/merger/filler/CarExtractRequestXmlFiller.java
++++ b/src/main/java/epts/data/service/merger/filler/CarExtractRequestXmlFiller.java
+@@ -5,36 +5,18 @@ import epts.data.service.merger.beans.R019VehicleEPassportExtractRequest;
+ import lombok.Getter;
+ 
+ public class CarExtractRequestXmlFiller {
+-    private final Car car;
++    private final String passportNumber;
+     @Getter
+     private final R019VehicleEPassportExtractRequest request;
+ 
+-    public CarExtractRequestXmlFiller(Car car, R019VehicleEPassportExtractRequest request) {
+-        this.car = car;
++    public CarExtractRequestXmlFiller(String passportNumber, R019VehicleEPassportExtractRequest request) {
++        this.passportNumber = passportNumber;
+         this.request = request;
+     }
+ 
+     public void fillExtract() {
+-        request.setVehicleEPassportKindCode(1);
+-
+-        if (car.getVin() != null && !car.getVin().isEmpty()) {
+-            request.getVehicleIdInfoDetails().getVehicleIdDetails().setVehicleIdentityNumberId(String.valueOf(car.getVin()));
+-            request.getVehicleIdInfoDetails().getVehicleIdDetails().setNotVehicleIdentityNumberIndicator(false);
+-        }
+-
+-        if (car.getEngineNumber() != null && !car.getEngineNumber().isEmpty()) {
+-            request.getVehicleIdInfoDetails().getVehicleEngineIdDetails().setVehicleIdentityNumberId(car.getEngineNumber());
+-            request.getVehicleIdInfoDetails().getVehicleEngineIdDetails().setNotVehicleIdentityNumberIndicator(false);
+-        }
+-
+-        if (car.getBodyId() != null && !car.getBodyId().isEmpty()) {
+-            request.getVehicleIdInfoDetails().getVehicleBodyIdDetails().setVehicleIdentityNumberId(car.getBodyId());
+-            request.getVehicleIdInfoDetails().getVehicleBodyIdDetails().setNotVehicleIdentityNumberIndicator(false);
+-        }
+-
+-        if (car.getFrameId() != null && !car.getFrameId().isEmpty()) {
+-            request.getVehicleIdInfoDetails().getVehicleFrameIdDetails().setVehicleIdentityNumberId(car.getFrameId());
+-            request.getVehicleIdInfoDetails().getVehicleFrameIdDetails().setNotVehicleIdentityNumberIndicator(false);
++        if (passportNumber != null && !passportNumber.isEmpty()) {
++            request.setVehicleEPassportId(passportNumber);
+         }
+     }
+ }
+diff --git a/src/main/java/epts/data/service/merger/filler/CarRevocationRequestXmlFiller.java b/src/main/java/epts/data/service/merger/filler/CarRevocationRequestXmlFiller.java
+index 666f8145f0d13d357237a71f94283b7c26c115e5..a6c1bbc112df0a2e872cd37f7e9d93e3b2933f7a 100644
+--- a/src/main/java/epts/data/service/merger/filler/CarRevocationRequestXmlFiller.java
++++ b/src/main/java/epts/data/service/merger/filler/CarRevocationRequestXmlFiller.java
+@@ -1,24 +1,23 @@
+ package epts.data.service.merger.filler;
+ 
+-import epts.data.entity.transport.Car;
+ import epts.data.service.merger.annul_beans.ELPTSRevocationRequest;
+ import lombok.Getter;
+ 
+ public class CarRevocationRequestXmlFiller {
+-    private final Car car;
++    private final String passportNumber;
+     @Getter
+     private final ELPTSRevocationRequest request;
+ 
+-    public CarRevocationRequestXmlFiller(Car car, ELPTSRevocationRequest request) {
+-        this.car = car;
++    public CarRevocationRequestXmlFiller(String passportNumber, ELPTSRevocationRequest request) {
++        this.passportNumber = passportNumber;
+         this.request = request;
+     }
+ 
+     public void fillExtract(String reason) {
+         request.setVehicleEPassportKindCode(1);
+ 
+-        if (car.getPassportNumber() != null && !car.getPassportNumber().isEmpty()) {
+-            request.setVehicleEPassportId(car.getPassportNumber());
++        if (passportNumber != null && !passportNumber.isEmpty()) {
++            request.setVehicleEPassportId(passportNumber);
+         }
+ 
+         if (reason != null && !reason.isEmpty()) {
+diff --git a/src/main/java/epts/ui/dialogs/excerpts/searchbyname/SearchEpByNamePresenter.java b/src/main/java/epts/ui/dialogs/excerpts/searchbyname/SearchEpByNamePresenter.java
+index 4c35a74395ff4aee5e915b2bf3ed3e905303189a..e769931be29ab9c19c8360bb945e2855caa719f8 100644
+--- a/src/main/java/epts/ui/dialogs/excerpts/searchbyname/SearchEpByNamePresenter.java
++++ b/src/main/java/epts/ui/dialogs/excerpts/searchbyname/SearchEpByNamePresenter.java
+@@ -2,18 +2,30 @@ package epts.ui.dialogs.excerpts.searchbyname;
+ 
+ import com.vaadin.flow.component.notification.NotificationVariant;
+ import com.vaadin.flow.spring.annotation.SpringComponent;
++
++import epts.data.service.api.ElptsService;
+ import epts.ui.mvp.Presenter;
++
++import org.springframework.beans.factory.annotation.Autowired;
+ import org.springframework.beans.factory.config.BeanDefinition;
+ import org.springframework.context.annotation.Scope;
+ 
+ @SpringComponent
+ @Scope(value = BeanDefinition.SCOPE_PROTOTYPE)
+ public class SearchEpByNamePresenter extends Presenter<SearchEpByNameDialog> {
++
++    private final ElptsService elptsService;
++
++    public SearchEpByNamePresenter(@Autowired ElptsService elptsService) {
++        this.elptsService = elptsService;
++    }
++
+     public void handleCloseClick() {
+         view.close();
+     }
+ 
+     public void handleSearchClick(String value) {
++        elptsService.sendExtractXml(value);
+         view.showNotification("Запрос отправлен!", NotificationVariant.LUMO_SUCCESS);
+         view.close();
+ 
+diff --git a/src/main/java/epts/ui/utils/XmlHandler.java b/src/main/java/epts/ui/utils/XmlHandler.java
+index f6612f9c3ca63390041afbe7a5c3b58fcd135106..c30bca9b17bee3200fd17180aeb3ae64f756c1cf 100644
+--- a/src/main/java/epts/ui/utils/XmlHandler.java
++++ b/src/main/java/epts/ui/utils/XmlHandler.java
+@@ -8,6 +8,10 @@ import java.util.HashMap;
+ import javax.xml.parsers.DocumentBuilder;
+ import javax.xml.parsers.DocumentBuilderFactory;
+ import javax.xml.parsers.ParserConfigurationException;
++import javax.xml.xpath.XPath;
++import javax.xml.xpath.XPathConstants;
++import javax.xml.xpath.XPathExpressionException;
++import javax.xml.xpath.XPathFactory;
+ 
+ import org.w3c.dom.Document;
+ import org.w3c.dom.Node;
+@@ -57,4 +61,25 @@ public class XmlHandler {
+         }
+         return message.toString();
+     }
++
++    public static String getPassport(String xmlResponse) throws ParserConfigurationException, IOException, SAXException, XPathExpressionException {
++        Document document = getDocument(xmlResponse);
++        XPath xPath = XPathFactory.newInstance().newXPath();
++        String passportExpression = "//*[contains(name(),'doc:PassportNumber')]";
++        Node passportNode = (Node) xPath.compile(passportExpression)
++                .evaluate(document, XPathConstants.NODE);
++        return passportNode != null ? passportNode.getTextContent() : "";
++    }
++
++    public static String getExtractFile(String xmlResponse) {
++        try {
++            Document document = XmlHandler.getDocument(xmlResponse);
++            XPath xPath = XPathFactory.newInstance().newXPath();
++            String expression = "//*[contains(name(),'doc:ExtractFile')]";
++            Node node = (Node) xPath.compile(expression).evaluate(document, XPathConstants.NODE);
++            return node.getTextContent().trim();
++        } catch (ParserConfigurationException | IOException | SAXException | XPathExpressionException e) {
++            throw new RuntimeException(e);
++        }
++    }
+ }
+diff --git a/src/main/java/epts/ui/utils/gridcreators/ExtractGridCreator.java b/src/main/java/epts/ui/utils/gridcreators/ExtractGridCreator.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..24b4dd01705b8c6e241656bd5629358be3c5afb8
+--- /dev/null
++++ b/src/main/java/epts/ui/utils/gridcreators/ExtractGridCreator.java
+@@ -0,0 +1,44 @@
++package epts.ui.utils.gridcreators;
++
++import com.vaadin.flow.component.button.Button;
++import com.vaadin.flow.component.grid.Grid;
++
++import epts.data.entity.Extract;
++import epts.ui.vaadin.components.SaveExtractButton;
++import epts.ui.views.excerpts.ExcerptsPresenter;
++
++public class ExtractGridCreator extends GridCreator<Extract> {
++    private final ExcerptsPresenter excerptsPresenter;
++
++    public ExtractGridCreator(ExcerptsPresenter excerptsPresenter) {
++        this.excerptsPresenter = excerptsPresenter;
++    }
++
++    @Override
++    public Grid<Extract> createGrid() {
++        grid = new Grid<>();
++        grid.addColumn(Extract::getPassportNumber)
++                .setHeader(grid.getTranslation("passportNumber"))
++                .setKey("passportNumber")
++                .setResizable(true)
++                .setAutoWidth(true);
++        grid.addColumn(Extract::getStatus)
++                .setHeader(grid.getTranslation("extractStatus"))
++                .setKey("extractStatus")
++                .setResizable(true)
++                .setAutoWidth(true);
++        grid.addComponentColumn(extract -> {
++            Button button = new Button("Отправить poll");
++            button.addClickListener(buttonClickEvent -> {
++                excerptsPresenter.handleStatusClick(extract.getPassportNumber());
++            });
++            return button;
++        });
++        grid.addComponentColumn(extract -> {
++            SaveExtractButton button = new SaveExtractButton();
++            button.setHref(extract);
++            return button;
++        });
++        return grid;
++    }
++}
+diff --git a/src/main/java/epts/ui/vaadin/components/SaveExtractButton.java b/src/main/java/epts/ui/vaadin/components/SaveExtractButton.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..0c26803659b4b08dc429732eb6acbfd70bc78e97
+--- /dev/null
++++ b/src/main/java/epts/ui/vaadin/components/SaveExtractButton.java
+@@ -0,0 +1,28 @@
++package epts.ui.vaadin.components;
++
++import java.io.ByteArrayInputStream;
++
++import org.apache.commons.codec.binary.Base64;
++
++import com.vaadin.flow.component.button.Button;
++import com.vaadin.flow.component.html.Anchor;
++import com.vaadin.flow.server.StreamResource;
++
++import epts.data.entity.Extract;
++import epts.ui.utils.XmlHandler;
++
++public class SaveExtractButton extends Anchor {
++
++    public SaveExtractButton() {
++        Button saveButton = new Button("Скачать выписку");
++        add(saveButton);
++    }
++
++    public void setHref(Extract extract) {
++        String extractFile = XmlHandler.getExtractFile(extract.getPollResponse());
++        byte[] bytes = Base64.decodeBase64(extractFile);
++        StreamResource resource = new StreamResource("extract.pdf", () -> new ByteArrayInputStream(bytes));
++        setHref(resource);
++    }
++
++}
+\ No newline at end of file
+diff --git a/src/main/java/epts/ui/views/epts/car/CarEptsPresenter.java b/src/main/java/epts/ui/views/epts/car/CarEptsPresenter.java
+index fbfd33b92e898b786eed4473a0f1418082fc413e..5c6b46e8042a47585f9e64d0c495b00c1ba746f2 100644
+--- a/src/main/java/epts/ui/views/epts/car/CarEptsPresenter.java
++++ b/src/main/java/epts/ui/views/epts/car/CarEptsPresenter.java
+@@ -1,5 +1,10 @@
+ package epts.ui.views.epts.car;
+ 
++import java.io.IOException;
++
++import javax.xml.parsers.ParserConfigurationException;
++import javax.xml.xpath.XPathExpressionException;
++
+ import com.vaadin.flow.component.notification.NotificationVariant;
+ import com.vaadin.flow.spring.annotation.RouteScope;
+ import com.vaadin.flow.spring.annotation.SpringComponent;
+@@ -11,9 +16,11 @@ import epts.data.service.api.ElptsService;
+ import epts.data.service.epts.GenericEptsService;
+ import epts.data.service.transport.CarService;
+ import epts.ui.utils.FillerHelper;
++import epts.ui.utils.XmlHandler;
+ import epts.ui.views.epts.EptsPresenter;
+ import lombok.Getter;
+ import org.springframework.beans.factory.annotation.Autowired;
++import org.xml.sax.SAXException;
+ 
+ @SpringComponent
+ @RouteScope
+@@ -50,6 +57,15 @@ public class CarEptsPresenter extends EptsPresenter<CarEptsView, Car> {
+         Request request;
+         try {
+             request = elptsService.sendPollRequest(car);
++            try {
++                String passport = XmlHandler.getPassport(request.getResponseXml());
++                if (passport != null && !passport.isEmpty()) {
++                    car.setPassportNumber(passport);
++                    carService.update(car);
++                }
++            } catch (ParserConfigurationException | IOException | SAXException | XPathExpressionException e) {
++                e.printStackTrace();
++            }
+         } catch(RuntimeException exc) {
+             view.showNotification("Запрос не существует!", NotificationVariant.LUMO_ERROR);
+             return;
+@@ -63,7 +79,7 @@ public class CarEptsPresenter extends EptsPresenter<CarEptsView, Car> {
+         Car car = carService.get(getTransportId()).orElseThrow();
+         GenericEpts genericEpts = car.getEpts().getGenericEpts();
+         long genericEptsId = genericEpts.getId();
+-        elptsService.sendAnnulXml(genericEptsId, car, reason); // Temp (extra variable "car").
++        elptsService.sendAnnulXml(genericEptsId, car.getPassportNumber(), reason); // Temp (extra variable "car").
+         view.showNotification("Запрос на аннулирование создан успешно!", NotificationVariant.LUMO_SUCCESS);
+     }
+ 
+diff --git a/src/main/java/epts/ui/views/excerpts/ExcerptsPresenter.java b/src/main/java/epts/ui/views/excerpts/ExcerptsPresenter.java
+index 1cc4c346702b10a9af4b03abd63c83d020d9f29f..463d1964094ae5c7dd3e942b7e62162b1ca82a6c 100644
+--- a/src/main/java/epts/ui/views/excerpts/ExcerptsPresenter.java
++++ b/src/main/java/epts/ui/views/excerpts/ExcerptsPresenter.java
+@@ -1,10 +1,33 @@
+ package epts.ui.views.excerpts;
+ 
++import com.vaadin.flow.component.notification.NotificationVariant;
+ import com.vaadin.flow.spring.annotation.RouteScope;
+ import com.vaadin.flow.spring.annotation.SpringComponent;
++import epts.data.service.ExtractService;
++import epts.data.service.api.ElptsService;
+ import epts.ui.mvp.Presenter;
+ 
++import lombok.Getter;
++import org.springframework.beans.factory.annotation.Autowired;
++
+ @SpringComponent
+ @RouteScope
+ public class ExcerptsPresenter extends Presenter<ExcerptsView> {
++    @Getter
++    private final ExtractService extractService;
++    private final ElptsService elptsService;
++
++    public ExcerptsPresenter(@Autowired ExtractService extractService, @Autowired ElptsService elptsService) {
++        this.extractService = extractService;
++        this.elptsService = elptsService;
++    }
++
++    public void handleStatusClick(Long passportNumber) {
++        elptsService.sendExtractPoll(passportNumber);
++        view.showNotification("Запрос отправлен!", NotificationVariant.LUMO_SUCCESS);
++    }
++
++    public void loadAllExtracts() {
++        view.setCallbackDataProvider(query -> extractService.getExtracts(query.getPage(), query.getPageSize()));
++    }
+ }
+diff --git a/src/main/java/epts/ui/views/excerpts/ExcerptsView.java b/src/main/java/epts/ui/views/excerpts/ExcerptsView.java
+index ca8d757215b12de3aa8d851e35059f1e8869ed77..e8ac6300f31e0507545a44ef1074c39b1392d080 100644
+--- a/src/main/java/epts/ui/views/excerpts/ExcerptsView.java
++++ b/src/main/java/epts/ui/views/excerpts/ExcerptsView.java
+@@ -1,6 +1,9 @@
+ package epts.ui.views.excerpts;
+ 
++import com.vaadin.flow.data.provider.CallbackDataProvider;
++import epts.data.entity.Extract;
+ import epts.ui.mvp.View;
+ 
+ public interface ExcerptsView extends View {
++    void setCallbackDataProvider(CallbackDataProvider.FetchCallback<Extract, Void> fetchCallback);
+ }
+diff --git a/src/main/java/epts/ui/views/excerpts/ExcerptsViewImpl.java b/src/main/java/epts/ui/views/excerpts/ExcerptsViewImpl.java
+index 9785e24406e96b11610b88ab87f31ea82fcf7c59..5f0277cabfe463e0a6cd9e910f81bdfcfab1cd17 100644
+--- a/src/main/java/epts/ui/views/excerpts/ExcerptsViewImpl.java
++++ b/src/main/java/epts/ui/views/excerpts/ExcerptsViewImpl.java
+@@ -3,10 +3,16 @@ package epts.ui.views.excerpts;
+ import com.vaadin.flow.component.Component;
+ import com.vaadin.flow.component.button.Button;
+ import com.vaadin.flow.component.button.ButtonVariant;
++import com.vaadin.flow.component.grid.Grid;
+ import com.vaadin.flow.component.orderedlayout.VerticalLayout;
++import com.vaadin.flow.data.provider.CallbackDataProvider;
++import com.vaadin.flow.router.AfterNavigationEvent;
++import com.vaadin.flow.router.AfterNavigationObserver;
+ import com.vaadin.flow.router.PageTitle;
+ import com.vaadin.flow.router.Route;
+ import com.vaadin.flow.server.auth.AnonymousAllowed;
++
++import epts.data.entity.Extract;
+ import epts.ui.dialogs.excerpts.searchbyfile.SearchEpByFileDialog;
+ import epts.ui.dialogs.excerpts.searchbyfile.SearchEpByFileDialogImpl;
+ import epts.ui.dialogs.excerpts.searchbyfile.SearchEpByFilePresenter;
+@@ -15,6 +21,8 @@ import epts.ui.dialogs.excerpts.searchbyname.SearchEpByNameDialogImpl;
+ import epts.ui.dialogs.excerpts.searchbyname.SearchEpByNamePresenter;
+ import epts.ui.layouts.BaseLayout;
+ import epts.ui.layouts.ToolsLayout;
++import epts.ui.utils.gridcreators.ExtractGridCreator;
++
+ import org.springframework.beans.factory.annotation.Autowired;
+ 
+ import javax.annotation.PostConstruct;
+@@ -22,7 +30,7 @@ import javax.annotation.PostConstruct;
+ @PageTitle("Выписки")
+ @Route(value = "excerpts", layout = BaseLayout.class)
+ @AnonymousAllowed
+-public class ExcerptsViewImpl extends VerticalLayout implements ExcerptsView {
++public class ExcerptsViewImpl extends VerticalLayout implements ExcerptsView, AfterNavigationObserver {
+     private final ExcerptsPresenter presenter;
+     private final Button searchEpByFileButton = new Button(getTranslation("tool-buttons.find-ep-file"));
+     private final Button searchEpByNameButton = new Button(getTranslation("tool-buttons.find-ep-name"));
+@@ -31,6 +39,7 @@ public class ExcerptsViewImpl extends VerticalLayout implements ExcerptsView {
+     private final SearchEpByFilePresenter searchEpByFilePresenter;
+     private final SearchEpByNamePresenter searchEpByNamePresenter;
+ 
++    private Grid<Extract> grid;
+ 
+     public ExcerptsViewImpl(@Autowired final ExcerptsPresenter presenter,
+                             @Autowired SearchEpByFilePresenter searchEpByFilePresenter,
+@@ -47,6 +56,9 @@ public class ExcerptsViewImpl extends VerticalLayout implements ExcerptsView {
+         getStyle().set("background-color", "#F5F7F9");
+         addClassNames("requests-view", "flex", "flex-col", "h-full");
+         setSizeFull();
++
++        grid = new ExtractGridCreator(presenter).createGrid();
++
+         searchEpByFileButton.addThemeVariants(ButtonVariant.LUMO_PRIMARY);
+         searchEpByNameButton.addThemeVariants(ButtonVariant.LUMO_PRIMARY);
+         downloadExcerptsButton.addThemeVariants(ButtonVariant.LUMO_PRIMARY);
+@@ -57,6 +69,7 @@ public class ExcerptsViewImpl extends VerticalLayout implements ExcerptsView {
+         ToolsLayout toolsLayout = new ToolsLayout(components);
+ 
+         add(toolsLayout);
++        add(grid);
+     }
+ 
+     private void setButtonsBehavior() {
+@@ -71,4 +84,14 @@ public class ExcerptsViewImpl extends VerticalLayout implements ExcerptsView {
+         });
+ 
+     }
++
++    @Override
++    public void afterNavigation(AfterNavigationEvent afterNavigationEvent) {
++        presenter.loadAllExtracts();
++    }
++
++    @Override
++    public void setCallbackDataProvider(CallbackDataProvider.FetchCallback<Extract, Void> fetchCallback) {
++        grid.setItems(fetchCallback);
++    }
+ }
+diff --git a/src/main/resources/application.properties b/src/main/resources/application.properties
+index 3500de7f3b38cadd84a56587994568a35a3b9ce6..a5e8f880e0f08a5a73680ccaf07ccff40a51b1e6 100644
+--- a/src/main/resources/application.properties
++++ b/src/main/resources/application.properties
+@@ -11,7 +11,7 @@ spring.mustache.check-template-location = false
+ spring.sql.init.mode=embedded
+ spring.sql.init.schema-locations=classpath*:database/create.sql
+ 
+*secret*
+ spring.datasource.username=worker
+ spring.datasource.password=worker1234
+ 
+diff --git a/src/main/resources/extract_poll_1.xml b/src/main/resources/extract_poll_1.xml
+new file mode 100644
+index 0000000000000000000000000000000000000000..d4b36e4b18be4a12a3b9fd77f30082cf3479a795
+--- /dev/null
++++ b/src/main/resources/extract_poll_1.xml
+@@ -0,0 +1,8 @@
++*secret*
+\ No newline at end of file
+diff --git a/src/main/resources/extract_poll_2.xml b/src/main/resources/extract_poll_2.xml
+new file mode 100644
+index 0000000000000000000000000000000000000000..ef9401ddbd2287bd2ec2a11bad595d7758f95414
+--- /dev/null
++++ b/src/main/resources/extract_poll_2.xml
+@@ -0,0 +1,18 @@
++*secret*
+\ No newline at end of file
+diff --git a/src/main/resources/localization_en.properties b/src/main/resources/localization_en.properties
+index 7203c5063409eaa25a393d81e3fd6e9ea0c129b0..544a6c0f275983db91d774e372fb70b6d71964a3 100644
+--- a/src/main/resources/localization_en.properties
++++ b/src/main/resources/localization_en.properties
+@@ -174,3 +174,7 @@ text-field.fuelType=Type of fuel
+ text-field.idInfo=Information about the identification number of the In-Vehicle Emergency Call System/Device
+ text-field.organizationInfo=Other information of the organization that issued the electronic passport
+ text-field.ep-num=EP number
++
++#EXTRACT FIELDS
++text-field.passportNumber=Passport number
++text-field.extractStatus=Extract status
+diff --git a/src/main/resources/localization_ru.properties b/src/main/resources/localization_ru.properties
+index e7904bab55f7c695cc46f7adf91ba0cafa63e16a..73950b6e442d26887e673d4233df8f0d2ceb5588 100644
+--- a/src/main/resources/localization_ru.properties
++++ b/src/main/resources/localization_ru.properties
+@@ -176,3 +176,7 @@ text-field.fuelType=Вид топлива
+ text-field.idInfo=Сведения об идентификационном номере устройства вызова экстренных оперативных служб
+ text-field.organizationInfo=Иная информация организации, оформившей электронный пасспорт
+ text-field.ep-num=Номер ЭП
++
++#EXTRACT FIELDS
++passportNumber=Номер паспорта
++extractStatus=Статус выписки
+diff --git a/src/main/resources/xml_to_sign_extract.xml b/src/main/resources/xml_to_sign_extract.xml
+new file mode 100644
+index 0000000000000000000000000000000000000000..29860bf0cd1b643d905fe261ee96b38132e6d9fb
+--- /dev/null
++++ b/src/main/resources/xml_to_sign_extract.xml
+@@ -0,0 +1,46 @@
++*secret*
+\ No newline at end of file
+diff --git a/src/test/java/ExtractPdf/TestExtractPdf.java b/src/test/java/ExtractPdf/TestExtractPdf.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..c1db9bfc8b98b6af9c8513ed248a3759c93fcf45
+--- /dev/null
++++ b/src/test/java/ExtractPdf/TestExtractPdf.java
+@@ -0,0 +1,75 @@
++package ExtractPdf;
++
++import epts.ui.utils.XmlHandler;
++import org.apache.commons.codec.binary.Base64;
++import org.junit.jupiter.api.Test;
++import org.w3c.dom.Document;
++import org.w3c.dom.Node;
++import org.xml.sax.SAXException;
++
++import javax.xml.parsers.ParserConfigurationException;
++import javax.xml.xpath.XPath;
++import javax.xml.xpath.XPathConstants;
++import javax.xml.xpath.XPathExpressionException;
++import javax.xml.xpath.XPathFactory;
++import java.io.FileOutputStream;
++import java.io.IOException;
++import java.io.OutputStream;
++import java.nio.file.Files;
++import java.nio.file.Path;
++
++public class TestExtractPdf {
++
++    String extractRequestFalse;
++    String extractFileFalse;
++
++    String extractRequestTrue;
++    String extractFileTrue;
++
++    String getXmlFromFile(Path path) {
++        try {
++            return Files.readString(path);
++        } catch (IOException e) {
++            throw new RuntimeException(e);
++        }
++    }
++
++    String getExtractFile(String xml) {
++        try {
++            Document document = XmlHandler.getDocument(xml);
++            XPath xPath = XPathFactory.newInstance().newXPath();
++            String expression = "//*[contains(name(),'doc:ExtractFile')]";
++            Node node = (Node) xPath.compile(expression).evaluate(document, XPathConstants.NODE);
++            return node.getTextContent();
++        } catch (ParserConfigurationException | IOException | SAXException | XPathExpressionException e) {
++            throw new RuntimeException(e);
++        }
++    }
++
++    void createPdf(String value, String fileName) {
++        try(OutputStream out = new FileOutputStream(fileName);) {
++            byte[] bytes = Base64.decodeBase64(value);
++            out.write(bytes);
++        } catch (IOException e) {
++            throw new RuntimeException(e);
++        }
++    }
++
++    @Test
++    void createPdfs() {
++        extractRequestFalse = getXmlFromFile(Path.of("src/test/resources/extract/extractTypeFalseResponse.xml"));
++        extractFileFalse = getExtractFile(extractRequestFalse);
++
++        extractRequestTrue = getXmlFromFile(Path.of("src/test/resources/extract/extractTypeTrueResponse.xml"));
++        extractFileTrue = getExtractFile(extractRequestTrue);
++
++        createPdf(extractFileFalse, "src/test/resources/extract/outFalse1.pdf");
++        createPdf(extractFileTrue, "src/test/resources/extract/outTrue1.pdf");
++
++        String trimmedTrue = extractFileTrue.trim();
++        String trimmedFalse = extractFileFalse.trim();
++
++        createPdf(trimmedFalse, "src/test/resources/extract/outFalse2.pdf");
++        createPdf(trimmedTrue, "src/test/resources/extract/outTrue2.pdf");
++    }
++}
+diff --git a/src/test/java/epts/data/service/ExtractBuilderTest.java b/src/test/java/epts/data/service/ExtractBuilderTest.java
+index 4fa97fd71fcff426f3885b105c789f29fb663f1f..67729b525733a76663167f4f3b78f1c9fa3c01df 100644
+--- a/src/test/java/epts/data/service/ExtractBuilderTest.java
++++ b/src/test/java/epts/data/service/ExtractBuilderTest.java
+@@ -22,6 +22,6 @@ public class ExtractBuilderTest {
+     @Test
+     void buildExtract() {
+         ExtractBuilder builder = new ExtractBuilder();
+-        assertDoesNotThrow(() -> builder.buildExtract(car));
++        assertDoesNotThrow(() -> builder.buildExtract("123"));
+     }
+ }
+diff --git a/src/test/java/epts/data/service/RevocationBuilderTest.java b/src/test/java/epts/data/service/RevocationBuilderTest.java
+index c4fcfb89a1e36b0fd383203ef6372b60c0a25bcc..ccca678d9989fb004d5f96ceffd2c8c9b8ef9a2d 100644
+--- a/src/test/java/epts/data/service/RevocationBuilderTest.java
++++ b/src/test/java/epts/data/service/RevocationBuilderTest.java
+@@ -32,7 +32,7 @@ public class RevocationBuilderTest {
+         RevocationBuilder revocationBuilder = new RevocationBuilder();
+         String xml = "";
+         try {
+-            xml = revocationBuilder.buildRevocation(car, reason);
++            xml = revocationBuilder.buildRevocation("123", reason);
+         } catch (JAXBException | ParserConfigurationException | TransformerException | IOException | SAXException e) {
+             e.printStackTrace();
+         }
+diff --git "a/src/test/resources/annul/\320\234\320\260\321\210\320\270\320\275\321\213 \320\275\320\260 \321\202\320\265\321\201\321\202.xlsx" "b/src/test/resources/annul/\320\234\320\260\321\210\320\270\320\275\321\213 \320\275\320\260 \321\202\320\265\321\201\321\202.xlsx"
+index f78bb27137ba90b24f1f4655a2d77b5c9075d064..1c499a2ea87d3bdbb68e07ca5c65b265975ed96b 100644
+Binary files "a/src/test/resources/annul/\320\234\320\260\321\210\320\270\320\275\321\213 \320\275\320\260 \321\202\320\265\321\201\321\202.xlsx" and "b/src/test/resources/annul/\320\234\320\260\321\210\320\270\320\275\321\213 \320\275\320\260 \321\202\320\265\321\201\321\202.xlsx" differ
+diff --git a/src/test/resources/extract/extractTypeFalseResponse.xml b/src/test/resources/extract/extractTypeFalseResponse.xml
+new file mode 100644
+index 0000000000000000000000000000000000000000..63b9b0d9c49647383894a9eaad4785c085224620
+--- /dev/null
++++ b/src/test/resources/extract/extractTypeFalseResponse.xml
+@@ -0,0 +1,242 @@
++*secret*
++                                    
++                                *secret*
++</soap:Envelope>
+\ No newline at end of file
+diff --git a/src/test/resources/extract/extractTypeTrueResponse.xml b/src/test/resources/extract/extractTypeTrueResponse.xml
+new file mode 100644
+index 0000000000000000000000000000000000000000..7f555791521036795d993c6d7269ce307d767230
+--- /dev/null
++++ b/src/test/resources/extract/extractTypeTrueResponse.xml
+@@ -0,0 +1,122 @@
++*secret*
++                                    
++                                *secret*
+\ No newline at end of file
+diff --git a/src/test/resources/extract/outFalse1.pdf b/src/test/resources/extract/outFalse1.pdf
+new file mode 100644
+index 0000000000000000000000000000000000000000..eaca104971ac1c476088f09366f7fdae574d5684
+Binary files /dev/null and b/src/test/resources/extract/outFalse1.pdf differ
+diff --git a/src/test/resources/extract/outFalse2.pdf b/src/test/resources/extract/outFalse2.pdf
+new file mode 100644
+index 0000000000000000000000000000000000000000..eaca104971ac1c476088f09366f7fdae574d5684
+Binary files /dev/null and b/src/test/resources/extract/outFalse2.pdf differ
+diff --git a/src/test/resources/extract/outTrue1.pdf b/src/test/resources/extract/outTrue1.pdf
+new file mode 100644
+index 0000000000000000000000000000000000000000..58f8e69f584579ed746e73d5e575a59226d5b5bd
+Binary files /dev/null and b/src/test/resources/extract/outTrue1.pdf differ
+diff --git a/src/test/resources/extract/outTrue2.pdf b/src/test/resources/extract/outTrue2.pdf
+new file mode 100644
+index 0000000000000000000000000000000000000000..58f8e69f584579ed746e73d5e575a59226d5b5bd
+Binary files /dev/null and b/src/test/resources/extract/outTrue2.pdf differ
+diff --git a/src/test/resources/extract/requestFromMaslakov.xml b/src/test/resources/extract/requestFromMaslakov.xml
+new file mode 100644
+index 0000000000000000000000000000000000000000..d198a5c4f03f0b09bf38e840df68d3fe900e4e85
+--- /dev/null
++++ b/src/test/resources/extract/requestFromMaslakov.xml
+@@ -0,0 +1,46 @@
++*secret*
+\ No newline at end of file
+diff --git a/src/test/resources/extract/requestWithChanges.xml b/src/test/resources/extract/requestWithChanges.xml
+new file mode 100644
+index 0000000000000000000000000000000000000000..546031820878d79f16cfa0cd3e907b954408a7b6
+--- /dev/null
++++ b/src/test/resources/extract/requestWithChanges.xml
+@@ -0,0 +1,49 @@
++*secret*
+\ No newline at end of file
+diff --git a/src/test/resources/extract/requestWithoutChanges.xml b/src/test/resources/extract/requestWithoutChanges.xml
+new file mode 100644
+index 0000000000000000000000000000000000000000..c80fdfd36dc5d0d498f79f99d059f8ca55499fb4
+--- /dev/null
++++ b/src/test/resources/extract/requestWithoutChanges.xml
+@@ -0,0 +1,50 @@
++*secret*
+\ No newline at end of file
+diff --git a/src/test/resources/extract/response.xml b/src/test/resources/extract/response.xml
+new file mode 100644
+index 0000000000000000000000000000000000000000..7eba44a5101daff3bcaa0a445fb365692caa41ed
+--- /dev/null
++++ b/src/test/resources/extract/response.xml
+@@ -0,0 +1,242 @@
++*secret*
++                                    
++                              *secret*
+\ No newline at end of file
+diff --git a/src/test/resources/truck_error/car_release.xml b/src/test/resources/truck_error/car_release.xml
+new file mode 100644
+index 0000000000000000000000000000000000000000..49e1dfeef1b266ebd4c06d3fdcbb0aa81c2f052a
+--- /dev/null
++++ b/src/test/resources/truck_error/car_release.xml
+@@ -0,0 +1,611 @@
++*secret*
+\ No newline at end of file
+diff --git a/src/test/resources/truck_error/truck_release.xml b/src/test/resources/truck_error/truck_release.xml
+new file mode 100644
+index 0000000000000000000000000000000000000000..74a231cf00ef5b241a9c116ae54520d068ce2e72
+--- /dev/null
++++ b/src/test/resources/truck_error/truck_release.xml
+@@ -0,0 +1,681 @@
++*secret*
+\ No newline at end of file

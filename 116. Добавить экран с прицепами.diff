@@ -1,0 +1,992 @@
+diff --git a/src/main/java/epts/data/query/TrailerQuery.java b/src/main/java/epts/data/query/TrailerQuery.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..4a02a023f2312cc08537c574ce377cb4ad2fc01b
+--- /dev/null
++++ b/src/main/java/epts/data/query/TrailerQuery.java
+@@ -0,0 +1,35 @@
++package epts.data.query;
++
++public class TrailerQuery {
++    public static final String FIND_ALL_TRAILER_FOR_SPECIFICATION_BY_FILTERS_VALUE = "SELECT * FROM trailer WHERE " +
++            "CAST(trailer.id AS TEXT) LIKE %:id% " +
++            "AND trailer.model LIKE %:model% " +
++            "AND trailer.vin LIKE %:vin% " +
++            "AND cast(trailer.production_year AS TEXT) LIKE %:productionYear% " +
++            "AND trailer.color LIKE %:color% " +
++            "AND cast(trailer.weight AS TEXT) LIKE %:weight% " +
++            "AND cast(trailer.max_weight AS TEXT) LIKE %:maxWeight% " +
++            "AND (trailer.id IN " +
++            "(SELECT vehicle_id FROM generic_vehicle WHERE generic_vehicle.specification_id = :spec_id)) ORDER BY trailer.id";
++
++    public static final String FIND_ALL_TRAILER_FOR_SPECIFICATION_BY_FILTERS_VALUE_COUNT_QUERY = "SELECT count(*) FROM trailer WHERE trailer.id IN " +
++            "(SELECT vehicle_id FROM generic_vehicle WHERE generic_vehicle.specification_id = :spec_id)";
++
++    public static final String FIND_ALL_TRAILER_FOR_SPECIFICATION = "SELECT * FROM trailer WHERE trailer.id IN " +
++            "(SELECT vehicle_id FROM generic_vehicle WHERE specification_id = ?1);";
++
++    public static final String FIND_ALL_TRAILER_FOR_SPECIFICATION_PAGEABLE_VALUE = "SELECT * FROM trailer WHERE trailer.id IN " +
++            "(SELECT vehicle_id FROM generic_vehicle WHERE specification_id = ?1) ORDER BY trailer.id";
++
++    public static final String FIND_ALL_TRAILER_FOR_SPECIFICATION_PAGEABLE_COUNT_QUERY = "SELECT count(*) FROM trailer WHERE trailer.id IN " +
++            "(SELECT vehicle_id FROM generic_vehicle WHERE specification_id = ?1)";
++
++    public static final String FIND_BY_FILTERS = "SELECT * FROM trailer WHERE " +
++            "cast(trailer.id AS TEXT) LIKE %:id% " +
++            "AND trailer.model LIKE %:model% " +
++            "AND trailer.vin LIKE %:vin% " +
++            "AND cast(trailer.production_year AS TEXT) LIKE %:productionYear% " +
++            "AND trailer.color LIKE %:color% " +
++            "AND cast(trailer.weight AS TEXT) LIKE %:weight% " +
++            "AND cast(trailer.max_weight AS TEXT) LIKE %:maxWeight%";
++}
+diff --git a/src/main/java/epts/data/repositories/epts/TrailerEptsRepository.java b/src/main/java/epts/data/repositories/epts/TrailerEptsRepository.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..a55a1ec2874a31ae7a9954e0c7ad1f17f651fe1a
+--- /dev/null
++++ b/src/main/java/epts/data/repositories/epts/TrailerEptsRepository.java
+@@ -0,0 +1,8 @@
++package epts.data.repositories.epts;
++
++import org.springframework.data.jpa.repository.JpaRepository;
++
++import epts.data.entity.epts.TrailerEpts;
++
++public interface TrailerEptsRepository extends JpaRepository<TrailerEpts, Long> {
++}
+diff --git a/src/main/java/epts/data/repositories/transport/TrailerRepository.java b/src/main/java/epts/data/repositories/transport/TrailerRepository.java
+index 3c7fe6037cbd79357d9e142a06fac2a90d4e0191..245475c9357aab9a47e5ac1e74c0f48619578bb0 100644
+--- a/src/main/java/epts/data/repositories/transport/TrailerRepository.java
++++ b/src/main/java/epts/data/repositories/transport/TrailerRepository.java
+@@ -2,14 +2,46 @@ package epts.data.repositories.transport;
+ 
+ import org.springframework.data.jpa.repository.JpaRepository;
+ import org.springframework.data.jpa.repository.Query;
+-import epts.data.entity.transport.Car;
++import org.springframework.data.repository.query.Param;
++
+ import epts.data.entity.transport.Trailer;
+ 
++import org.springframework.data.domain.Pageable;
++
+ import java.util.List;
+ 
++import static epts.data.query.TrailerQuery.*;
++
+ public interface TrailerRepository extends JpaRepository<Trailer, Long> {
+ 
+-    @Query(value = "SELECT * FROM trailer WHERE trailer.id IN " +
+-            "(SELECT trailer_id FROM generic_vehicle WHERE specification_id = ?1);", nativeQuery = true)
+-    List<Car> findAllTrailersForSpecification(long specification_id);
++    @Query(value = FIND_ALL_TRAILER_FOR_SPECIFICATION_BY_FILTERS_VALUE,
++            countQuery = FIND_ALL_TRAILER_FOR_SPECIFICATION_BY_FILTERS_VALUE_COUNT_QUERY, nativeQuery = true)
++    List<Trailer> findTrailersForSpecificationByFilters(
++            @Param("spec_id") Long specId,
++            @Param("id") String id,
++            @Param("model") String model,
++            @Param("vin") String vin,
++            @Param("productionYear") String productionYear,
++            @Param("color") String color,
++            @Param("weight") String weight,
++            @Param("maxWeight") String maxWeight,
++            Pageable pageable);
++
++    @Query(value = FIND_ALL_TRAILER_FOR_SPECIFICATION_PAGEABLE_VALUE,
++            countQuery = FIND_ALL_TRAILER_FOR_SPECIFICATION_PAGEABLE_COUNT_QUERY, nativeQuery = true)
++    List<Trailer> findTrailersForSpecification(long specification_id, Pageable pageable);
++
++    @Query(value = FIND_ALL_TRAILER_FOR_SPECIFICATION, nativeQuery = true)
++    List<Trailer> findTrailersForSpecification(long specification_id);
++
++    @Query(value = FIND_BY_FILTERS, nativeQuery = true)
++    List<Trailer> findByFilters(
++            @Param("id") String id,
++            @Param("model") String model,
++            @Param("vin") String vin,
++            @Param("productionYear") String productionYear,
++            @Param("color") String color,
++            @Param("weight") String weight,
++            @Param("maxWeight") String maxWeight,
++            Pageable pageable);
+ }
+diff --git a/src/main/java/epts/data/service/epts/TrailerEptsService.java b/src/main/java/epts/data/service/epts/TrailerEptsService.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..9d444e4184b917fd24c2323fc970bf1cd29ce0ed
+--- /dev/null
++++ b/src/main/java/epts/data/service/epts/TrailerEptsService.java
+@@ -0,0 +1,23 @@
++package epts.data.service.epts;
++
++import org.springframework.beans.factory.annotation.Autowired;
++import org.springframework.stereotype.Service;
++import org.vaadin.artur.helpers.CrudService;
++
++import epts.data.entity.epts.TrailerEpts;
++import epts.data.repositories.epts.TrailerEptsRepository;
++
++@Service
++public class TrailerEptsService extends CrudService<TrailerEpts, Long> {
++
++    private final TrailerEptsRepository repository;
++
++    public TrailerEptsService(@Autowired TrailerEptsRepository repository) {
++        this.repository = repository;
++    }
++
++    @Override
++    public TrailerEptsRepository getRepository() {
++        return repository;
++    }
++}
+diff --git a/src/main/java/epts/data/service/transport/TrailerService.java b/src/main/java/epts/data/service/transport/TrailerService.java
+index 7958953ed13ff166d4e8a86e374cd875a244c9e7..66cc60f60f0807ab32e0ab4babe4b6f7ae347104 100644
+--- a/src/main/java/epts/data/service/transport/TrailerService.java
++++ b/src/main/java/epts/data/service/transport/TrailerService.java
+@@ -2,22 +2,68 @@ package epts.data.service.transport;
+ 
+ import epts.data.entity.transport.Trailer;
+ import epts.data.repositories.transport.TrailerRepository;
++
+ import org.springframework.beans.factory.annotation.Autowired;
++import org.springframework.data.domain.PageRequest;
++import org.springframework.stereotype.Service;
+ import org.vaadin.artur.helpers.CrudService;
+ 
++import java.util.HashMap;
+ import java.util.List;
++import java.util.stream.Stream;
+ 
++@Service
+ public class TrailerService extends CrudService<Trailer, Long> {
+-    private TrailerRepository repository;
++
++    private final TrailerRepository repository;
+ 
+     public TrailerService(@Autowired TrailerRepository repository) {
+         this.repository = repository;
+     }
+ 
+-    public List<Trailer> getVehicles() {
++    public List<Trailer> getTrailers() {
+         return this.getRepository().findAll();
+     }
+ 
++    public Stream<Trailer> getTrailer(int page, int pageSize) {
++        return repository.findAll(PageRequest.of(page, pageSize)).stream();
++    }
++
++    public List<Trailer> getTrailersForSpecification(long specificationId) {
++        return repository.findTrailersForSpecification(specificationId);
++    }
++
++    public Stream<Trailer> getTrailersForSpecification(long specificationId, int page, int pageSize) {
++        return repository.findTrailersForSpecification(specificationId, PageRequest.of(page, pageSize)).stream();
++    }
++
++    public Stream<Trailer> getTrailersByFilter(HashMap<String, String> filterValueByFieldName, int page, int pageSize) {
++        return repository.findByFilters(
++                filterValueByFieldName.get("id"),
++                filterValueByFieldName.get("model"),
++                filterValueByFieldName.get("vin"),
++                filterValueByFieldName.get("productionYear"),
++                filterValueByFieldName.get("color"),
++                filterValueByFieldName.get("weight"),
++                filterValueByFieldName.get("maxWeight"),
++                PageRequest.of(page, pageSize)
++        ).stream();
++    }
++
++    public Stream<Trailer> getTrailersForSpecificationByFilters(Long specificationId, HashMap<String, String> filterValueByFieldName, int page, int pageSize) {
++        return repository.findTrailersForSpecificationByFilters(
++                specificationId,
++                filterValueByFieldName.get("id"),
++                filterValueByFieldName.get("model"),
++                filterValueByFieldName.get("vin"),
++                filterValueByFieldName.get("productionYear"),
++                filterValueByFieldName.get("color"),
++                filterValueByFieldName.get("weight"),
++                filterValueByFieldName.get("maxWeight"),
++                PageRequest.of(page, pageSize)
++        ).stream();
++    }
++
+     @Override
+     protected TrailerRepository getRepository() {
+         return repository;
+diff --git a/src/main/java/epts/ui/dialogs/specification/SpecificationCreatingPresenter.java b/src/main/java/epts/ui/dialogs/specification/SpecificationCreatingPresenter.java
+index fd3e384e22d51f53b5b788b198282f2a36d31abd..b7a0ef313d8752771f8f119fb1ac9c255ea8b24a 100644
+--- a/src/main/java/epts/ui/dialogs/specification/SpecificationCreatingPresenter.java
++++ b/src/main/java/epts/ui/dialogs/specification/SpecificationCreatingPresenter.java
+@@ -2,24 +2,29 @@ package epts.ui.dialogs.specification;
+ 
+ import com.vaadin.flow.component.notification.NotificationVariant;
+ import com.vaadin.flow.spring.annotation.SpringComponent;
++
+ import epts.data.entity.Specification;
+ import epts.data.service.GenericVehicleService;
+ import epts.data.service.SpecificationService;
+ import epts.data.service.epts.CarEptsService;
+ import epts.data.service.epts.GenericEptsService;
++import epts.data.service.epts.TrailerEptsService;
+ import epts.data.service.epts.TruckEptsService;
+ import epts.data.service.specification.parsers.CarSpecificationParser;
+ import epts.data.service.specification.parsers.TruckSpecificationParser;
+ import epts.data.service.transport.CarService;
++import epts.data.service.transport.TrailerService;
+ import epts.data.service.transport.TruckService;
+ import epts.ui.mvp.Presenter;
+ import epts.ui.utils.TransportType;
+ import lombok.Getter;
++
+ import org.springframework.beans.factory.annotation.Autowired;
+ import org.springframework.beans.factory.config.BeanDefinition;
+ import org.springframework.context.annotation.Scope;
+ 
+ import javax.sql.rowset.serial.SerialBlob;
++
+ import java.io.IOException;
+ import java.io.InputStream;
+ import java.sql.Blob;
+@@ -37,6 +42,8 @@ public class SpecificationCreatingPresenter extends Presenter<SpecificationCreat
+     private final GenericEptsService genericEptsService;
+     private final TruckEptsService truckEptsService;
+     private final TruckService truckService;
++    private final TrailerEptsService trailerEptsService;
++    private final TrailerService trailerService;
+ 
+     @Getter
+     private Specification specificationEntity;
+@@ -47,7 +54,9 @@ public class SpecificationCreatingPresenter extends Presenter<SpecificationCreat
+                                           @Autowired CarEptsService carEptsService,
+                                           @Autowired GenericEptsService genericEptsService,
+                                           @Autowired TruckEptsService truckEptsService,
+-                                          @Autowired TruckService truckService) {
++                                          @Autowired TruckService truckService,
++                                          @Autowired TrailerEptsService trailerEptsService,
++                                          @Autowired TrailerService trailerService) {
+         this.specificationService = specificationService;
+         this.carService = carService;
+         this.genericVehicleService = genericVehicleService;
+@@ -55,6 +64,8 @@ public class SpecificationCreatingPresenter extends Presenter<SpecificationCreat
+         this.genericEptsService = genericEptsService;
+         this.truckEptsService = truckEptsService;
+         this.truckService = truckService;
++        this.trailerEptsService = trailerEptsService;
++        this.trailerService = trailerService;
+     }
+ 
+     public void handleUploadReject() {
+@@ -74,6 +85,7 @@ public class SpecificationCreatingPresenter extends Presenter<SpecificationCreat
+         switch (transportType) {
+             case CAR -> addNewCarSpec(updSpecification);
+             case TRUCK -> addNewTruckSpec(updSpecification);
++            case TRAILER -> addNewTrailerSpec(updSpecification);
+         }
+         handleCloseClick();
+     }
+@@ -83,13 +95,14 @@ public class SpecificationCreatingPresenter extends Presenter<SpecificationCreat
+         view.close();
+     }
+ 
+-    private Blob convertFileToBlob(InputStream stream){
++    private Blob convertFileToBlob(InputStream stream) {
+         SerialBlob blob = null;
+-        try{
++        try {
+             byte[] content = stream.readAllBytes();
+             blob = new SerialBlob(content);
+         } catch (IOException | SQLException e) {
+             e.printStackTrace();
++            view.showNotification("Не удается сконвертировать переданный файл.", NotificationVariant.LUMO_ERROR);
+         }
+ 
+         return blob;
+@@ -104,4 +117,8 @@ public class SpecificationCreatingPresenter extends Presenter<SpecificationCreat
+         new CarSpecificationParser(carService, genericVehicleService, carEptsService, genericEptsService)
+                 .parse(specification);
+     }
++
++    private void addNewTrailerSpec(Specification specification) {
++        // TODO: new TrailerSpecificationParser(trailerService, genericVehicleService, trailerEptsService, genericEptsService).parse(specification);
++    }
+ }
+diff --git a/src/main/java/epts/ui/dialogs/specificationid/EptsForAllCreatingDialog.java b/src/main/java/epts/ui/dialogs/specificationid/EptsForAllCreatingDialog.java
+index df51a3d46f2d5fb6a794b5af39fe9ae62f00942e..10c25a7d9633aa370b1c111693edd78f3b8edb26 100644
+--- a/src/main/java/epts/ui/dialogs/specificationid/EptsForAllCreatingDialog.java
++++ b/src/main/java/epts/ui/dialogs/specificationid/EptsForAllCreatingDialog.java
+@@ -12,4 +12,6 @@ public interface EptsForAllCreatingDialog extends View {
+ 
+     <T extends ComponentEvent<?>> Registration addListener(Class<T> eventType,
+                                                            ComponentEventListener<T> listener);
++
++    void handleCreateEpts(String validationResults);
+ }
+diff --git a/src/main/java/epts/ui/dialogs/specificationid/EptsForAllCreatingDialogImpl.java b/src/main/java/epts/ui/dialogs/specificationid/EptsForAllCreatingDialogImpl.java
+index 55da3f8146b878294bcaf73851c86620f1cd18a7..02b1d1c3c118d7d9ebc97994340f5409b58fe7a6 100644
+--- a/src/main/java/epts/ui/dialogs/specificationid/EptsForAllCreatingDialogImpl.java
++++ b/src/main/java/epts/ui/dialogs/specificationid/EptsForAllCreatingDialogImpl.java
+@@ -90,8 +90,21 @@ public class EptsForAllCreatingDialogImpl extends Dialog implements EptsForAllCr
+             init();
+         }
+         super.open();
+-        String validationResult = presenter.createEpts(specificationId);
++        presenter.createEpts(specificationId);
++    }
++
++    @Override
++    protected void onAttach(AttachEvent attachEvent) {
++        presenter.onAttach(this);
++    }
++
++    @Override
++    protected void onDetach(DetachEvent detachEvent) {
++        presenter.onDetach();
++    }
+ 
++    @Override
++    public void handleCreateEpts(String validationResult) {
+         if (validationResult.isEmpty() && presenter.isContainedEpts()) {
+             validationResult = "Все найдены!";
+         }
+@@ -104,14 +117,4 @@ public class EptsForAllCreatingDialogImpl extends Dialog implements EptsForAllCr
+         scroller.setContent(result);
+     }
+ 
+-    @Override
+-    protected void onAttach(AttachEvent attachEvent) {
+-        presenter.onAttach(this);
+-    }
+-
+-    @Override
+-    protected void onDetach(DetachEvent detachEvent) {
+-        presenter.onDetach();
+-    }
+-
+ }
+diff --git a/src/main/java/epts/ui/dialogs/specificationid/EptsForAllCreatingPresenter.java b/src/main/java/epts/ui/dialogs/specificationid/EptsForAllCreatingPresenter.java
+index 8f3495ee5f0f37da537e1c10c0f3737c300a0693..35a7702c0cd6b6d3c38140adcaf13689c625e0a2 100644
+--- a/src/main/java/epts/ui/dialogs/specificationid/EptsForAllCreatingPresenter.java
++++ b/src/main/java/epts/ui/dialogs/specificationid/EptsForAllCreatingPresenter.java
+@@ -20,5 +20,5 @@ public abstract class EptsForAllCreatingPresenter extends Presenter<EptsForAllCr
+ 
+     public abstract boolean isContainedEpts();
+ 
+-    public abstract String createEpts(long specificationId);
++    public abstract void createEpts(long specificationId);
+ }
+diff --git a/src/main/java/epts/ui/dialogs/specificationid/car/EptsForAllCarsCreatingPresenter.java b/src/main/java/epts/ui/dialogs/specificationid/car/EptsForAllCarsCreatingPresenter.java
+index a4502470c0ca97cb9b5762c14bc1c3b3ff3101bf..f2ea5ad9eff75d06a8fe118a0ab898bd82ed2417 100644
+--- a/src/main/java/epts/ui/dialogs/specificationid/car/EptsForAllCarsCreatingPresenter.java
++++ b/src/main/java/epts/ui/dialogs/specificationid/car/EptsForAllCarsCreatingPresenter.java
+@@ -65,7 +65,7 @@ public class EptsForAllCarsCreatingPresenter extends EptsForAllCreatingPresenter
+         return !filledOfEpts.isEmpty();
+     }
+ 
+-    public String createEpts(long specificationId) {
++    public void createEpts(long specificationId) {
+         List<Template> templates = templateService.getTemplates();
+         StringBuilder emptyEpts = new StringBuilder();
+         List<Car> cars = carService.getAllCarsForSpecification(specificationId);
+@@ -95,7 +95,7 @@ public class EptsForAllCarsCreatingPresenter extends EptsForAllCreatingPresenter
+             }
+         }
+ 
+-        return emptyEpts.toString();
++        view.handleCreateEpts(emptyEpts.toString());
+     }
+ 
+     private String getProductionEpts(Car car, Template template) {
+diff --git a/src/main/java/epts/ui/dialogs/specificationid/trailer/EptsForAllTrailersCreatingPresenter.java b/src/main/java/epts/ui/dialogs/specificationid/trailer/EptsForAllTrailersCreatingPresenter.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..8c55091159994abfb235610c7a2b541cd6c6a2df
+--- /dev/null
++++ b/src/main/java/epts/ui/dialogs/specificationid/trailer/EptsForAllTrailersCreatingPresenter.java
+@@ -0,0 +1,108 @@
++package epts.ui.dialogs.specificationid.trailer;
++
++import java.util.ArrayList;
++import java.util.List;
++
++import org.springframework.beans.factory.annotation.Autowired;
++import org.springframework.beans.factory.config.BeanDefinition;
++import org.springframework.context.annotation.Scope;
++
++import com.vaadin.flow.component.notification.NotificationVariant;
++import com.vaadin.flow.spring.annotation.SpringComponent;
++
++import epts.data.entity.Template;
++import epts.data.entity.epts.GenericEpts;
++import epts.data.entity.epts.TrailerEpts;
++import epts.data.entity.transport.Trailer;
++import epts.data.service.transport.TrailerService;
++import epts.ui.dialogs.specificationid.EptsForAllCreatingPresenter;
++
++@SpringComponent
++@Scope(value = BeanDefinition.SCOPE_PROTOTYPE)
++public class EptsForAllTrailersCreatingPresenter extends EptsForAllCreatingPresenter {
++
++    private final TrailerService trailerService;
++    private List<Trailer> filledOfEpts;
++
++    public EptsForAllTrailersCreatingPresenter(@Autowired TrailerService trailerService) {
++        super();
++        this.trailerService = trailerService;
++        this.filledOfEpts = new ArrayList<>();
++    }
++
++    @Override
++    public void handleCloseClick() {
++        view.close();
++        filledOfEpts = new ArrayList<>();
++    }
++
++    @Override
++    public void handleCreateClick() {
++        for (Trailer filledTrailer : filledOfEpts) {
++            try {
++                sendRequest(filledTrailer);
++                filledTrailer.getEpts().getGenericEpts().setStatus("Выпущен");
++                view.showNotification("ЭПТС отправлены!", NotificationVariant.LUMO_SUCCESS);
++            } catch (Exception e) {
++                e.printStackTrace();
++                view.showNotification("ЭПТС не выпущены!", NotificationVariant.LUMO_ERROR);
++            }
++        }
++        view.close();
++        filledOfEpts = new ArrayList<>();
++    }
++
++    @Override
++    public boolean isContainedEpts() {
++        return !filledOfEpts.isEmpty();
++    }
++
++    @Override
++    public void createEpts(long specificationId) {
++        List<Template> templates = templateService.getTemplates();
++        StringBuilder emptyEpts = new StringBuilder();
++        List<Trailer> trailers = trailerService.getTrailersForSpecification(specificationId);
++        for (Trailer trailer : trailers) {
++            boolean isFound = false;
++            for (Template template : templates) {
++                if (template.getModel().equals(trailer.getModel())) {
++                    isFound = true;
++                    String productionEpts = getProductionEpts(trailer, template);
++                    TrailerEpts epts = trailer.getEpts();
++                    GenericEpts genericEpts = epts.getGenericEpts();
++                    genericEpts.setEptsTemplate(template);
++                    genericEpts.setEptsXml(productionEpts);
++                    genericEpts.setStatus("Готов");
++                    genericEpts.setTrailerEpts(epts);
++                    genericEptsService.update(genericEpts);
++                    filledOfEpts.add(trailer);
++                    break;
++                }
++            }
++
++            if (!isFound) {
++                emptyEpts.append("  VIN:  ").append(trailer.getVin())
++                        .append("  Модель:  ").append(trailer.getModel())
++                        .append(" - шаблон не найден.\n");
++            }
++        }
++
++        view.handleCreateEpts(emptyEpts.toString());
++    }
++
++    private String getProductionEpts(Trailer trailer, Template template) {
++        // TODO: проблема с EptsPatternResponse для прицепов.
++        return null;
++    }
++
++    private void sendRequest(Trailer trailer) {
++        GenericEpts genericEpts = trailer.getEpts().getGenericEpts();
++        long genericEptsId = genericEpts.getId();
++        elptsService.sendXml(genericEptsId);
++        view.showNotification("Запрос на выпуск ЭПТС создан успешно!", NotificationVariant.LUMO_SUCCESS);
++
++        genericEpts = trailerService.get(trailer.getId()).orElseThrow().getEpts().getGenericEpts();
++        long createRequestId = genericEpts.getCreateRequestId();
++        elptsService.sendPoll(createRequestId);
++    }
++}
+diff --git a/src/main/java/epts/ui/dialogs/specificationid/truck/EptsForAllTrucksCreatingPresenter.java b/src/main/java/epts/ui/dialogs/specificationid/truck/EptsForAllTrucksCreatingPresenter.java
+index 5b00e7001a2c6a71441f6587739adeab3cc26f61..d69a4b635e09a628ee2ef4f2c66c7c15a74e7c08 100644
+--- a/src/main/java/epts/ui/dialogs/specificationid/truck/EptsForAllTrucksCreatingPresenter.java
++++ b/src/main/java/epts/ui/dialogs/specificationid/truck/EptsForAllTrucksCreatingPresenter.java
+@@ -65,7 +65,7 @@ public class EptsForAllTrucksCreatingPresenter extends EptsForAllCreatingPresent
+         return !filledOfEpts.isEmpty();
+     }
+ 
+-    public String createEpts(long specificationId) {
++    public void createEpts(long specificationId) {
+         List<Template> templates = templateService.getTemplates();
+         StringBuilder emptyEpts = new StringBuilder();
+         List<Truck> trucks = truckService.getTrucksForSpecification(specificationId);
+@@ -94,7 +94,7 @@ public class EptsForAllTrucksCreatingPresenter extends EptsForAllCreatingPresent
+             }
+         }
+ 
+-        return emptyEpts.toString();
++        view.handleCreateEpts(emptyEpts.toString());
+     }
+ 
+     private String getProductionEpts(Truck truck, Template template) {
+diff --git a/src/main/java/epts/ui/utils/gridcreators/TrailerGridCreator.java b/src/main/java/epts/ui/utils/gridcreators/TrailerGridCreator.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..e5180eafaddac4395f1ba0ef6651f8d8c4e75e4e
+--- /dev/null
++++ b/src/main/java/epts/ui/utils/gridcreators/TrailerGridCreator.java
+@@ -0,0 +1,64 @@
++package epts.ui.utils.gridcreators;
++
++import com.vaadin.flow.component.grid.Grid;
++
++import epts.data.entity.transport.Trailer;
++
++public class TrailerGridCreator extends GridCreator<Trailer> {
++
++    @Override
++    public Grid<Trailer> createGrid() {
++        grid = new Grid<>();
++        grid.setSelectionMode(Grid.SelectionMode.MULTI);
++        grid.addColumn(Trailer::getId)
++                .setKey("id")
++                .setHeader(grid.getTranslation("id"))
++                .setResizable(true)
++                .setAutoWidth(true);
++
++        grid.addColumn(trailer -> {
++                    String value = "Отсутствует";
++                    if (trailer.getEpts() != null && trailer.getEpts().getGenericEpts() != null &&
++                            trailer.getEpts().getGenericEpts().getStatus() != null) {
++                        value = trailer.getEpts().getGenericEpts().getStatus();
++                    }
++                    return value;
++                })
++                .setHeader(grid.getTranslation("statusEp"))
++                .setKey("statusEp")
++                .setResizable(true)
++                .setAutoWidth(true);
++
++        grid.addColumn(Trailer::getModel)
++                .setHeader(grid.getTranslation("model"))
++                .setKey("model")
++                .setResizable(true)
++                .setAutoWidth(true);
++        grid.addColumn(Trailer::getVin)
++                .setHeader(grid.getTranslation("vin"))
++                .setKey("vin")
++                .setResizable(true)
++                .setAutoWidth(true);
++        grid.addColumn(Trailer::getProductionYear)
++                .setHeader(grid.getTranslation("productionYear"))
++                .setKey("productionYear")
++                .setResizable(true)
++                .setAutoWidth(true);
++        grid.addColumn(Trailer::getColor)
++                .setHeader(grid.getTranslation("color"))
++                .setKey("color")
++                .setResizable(true)
++                .setAutoWidth(true);
++        grid.addColumn(Trailer::getWeight)
++                .setHeader(grid.getTranslation("weight"))
++                .setKey("weight")
++                .setResizable(true)
++                .setAutoWidth(true);
++        grid.addColumn(Trailer::getMaxWeight)
++                .setHeader(grid.getTranslation("maxWeight"))
++                .setKey("maxWeight")
++                .setResizable(true)
++                .setResizable(true);
++        return grid;
++    }
++}
+diff --git a/src/main/java/epts/ui/views/specification/SpecificationPresenter.java b/src/main/java/epts/ui/views/specification/SpecificationPresenter.java
+index 6677b9835e0414ed615b874bef575092d29a6dd6..5fbc14880d87e48dd64fb207bd42904f10126e46 100644
+--- a/src/main/java/epts/ui/views/specification/SpecificationPresenter.java
++++ b/src/main/java/epts/ui/views/specification/SpecificationPresenter.java
+@@ -6,6 +6,7 @@ import com.vaadin.flow.spring.annotation.SpringComponent;
+ import epts.data.entity.Specification;
+ import epts.data.service.SpecificationService;
+ import epts.data.service.transport.CarService;
++import epts.data.service.transport.TrailerService;
+ import epts.data.service.transport.TruckService;
+ import epts.ui.mvp.Presenter;
+ import epts.ui.utils.TransportType;
+@@ -28,6 +29,8 @@ public class SpecificationPresenter extends Presenter<SpecificationView> {
+     private CarService carService;
+     @Autowired
+     private TruckService truckService;
++    @Autowired
++    private TrailerService trailerService;
+ 
+     public SpecificationPresenter(@Autowired SpecificationService specificationService) {
+         this.specificationService = specificationService;
+@@ -60,6 +63,9 @@ public class SpecificationPresenter extends Presenter<SpecificationView> {
+             case TRUCK -> {
+                 return truckService.getTrucksForSpecification(specificationId);
+             }
++            case TRAILER -> {
++                return trailerService.getTrailersForSpecification(specificationId);
++            }
+         }
+         return null;
+     }
+diff --git a/src/main/java/epts/ui/views/specification/SpecificationViewImpl.java b/src/main/java/epts/ui/views/specification/SpecificationViewImpl.java
+index 113e0084b6e946fda8c67c32027994b9f206edb1..0ff2f4ba5212c324dd7e5f660d2dd115e62faebf 100644
+--- a/src/main/java/epts/ui/views/specification/SpecificationViewImpl.java
++++ b/src/main/java/epts/ui/views/specification/SpecificationViewImpl.java
+@@ -11,8 +11,10 @@ import com.vaadin.flow.data.provider.CallbackDataProvider;
+ import com.vaadin.flow.data.renderer.ComponentRenderer;
+ import com.vaadin.flow.router.*;
+ import com.vaadin.flow.server.auth.AnonymousAllowed;
++
+ import epts.data.entity.Specification;
+ import epts.data.entity.transport.Car;
++import epts.data.entity.transport.Trailer;
+ import epts.data.entity.transport.Truck;
+ import epts.ui.dialogs.specification.SpecificationCreatingDialog;
+ import epts.ui.dialogs.specification.SpecificationCreatingDialogImpl;
+@@ -23,13 +25,16 @@ import epts.ui.utils.Navigator;
+ import epts.ui.utils.TransportType;
+ import epts.ui.utils.gridcreators.CarGridCreator;
+ import epts.ui.utils.gridcreators.SpecificationGridCreator;
++import epts.ui.utils.gridcreators.TrailerGridCreator;
+ import epts.ui.utils.gridcreators.TruckGridCreator;
+ import epts.ui.vaadin.components.SaveReportButton;
+ import epts.ui.vaadin.components.TransportTypeSwitcherButton;
+ import epts.ui.vaadin.events.SaveEvent;
++
+ import org.springframework.beans.factory.annotation.Autowired;
+ 
+ import javax.annotation.PostConstruct;
++
+ import java.util.HashMap;
+ import java.util.LinkedList;
+ import java.util.List;
+@@ -38,6 +43,7 @@ import java.util.Set;
+ @PageTitle("Спецификации")
+ @Route(value = "specification/car", layout = BaseLayout.class)
+ @RouteAlias(value = "specification/truck", layout = BaseLayout.class)
++@RouteAlias(value = "specification/trailer", layout = BaseLayout.class)
+ @AnonymousAllowed
+ public class SpecificationViewImpl extends VerticalLayout implements SpecificationView, AfterNavigationObserver {
+     private final SpecificationPresenter presenter;
+@@ -79,6 +85,7 @@ public class SpecificationViewImpl extends VerticalLayout implements Specificati
+         HashMap<String, String> namesAndRoutes = new HashMap<>();
+         namesAndRoutes.put("Автомобили", "specification/car");
+         namesAndRoutes.put("Грузовики", "specification/truck");
++        namesAndRoutes.put("Прицепы", "specification/trailer");
+         TransportTypeSwitcherButton transportTypeSwitcher = new TransportTypeSwitcherButton(getTranslation("tool-buttons.transport-type"), namesAndRoutes);
+ 
+         saveReport = new SaveReportButton();
+@@ -118,8 +125,12 @@ public class SpecificationViewImpl extends VerticalLayout implements Specificati
+                 setGridItemClickBehavior("specification/truck/");
+                 presenter.loadSpecifications(transportType);
+             }
+-            case TRAILER -> {}
+-            case AUTOMOTIVE -> {}
++            case TRAILER -> {
++                setGridItemClickBehavior("specification/trailer/");
++                presenter.loadSpecifications(transportType);
++            }
++            case AUTOMOTIVE -> {
++            }
+         }
+     }
+ 
+@@ -136,29 +147,50 @@ public class SpecificationViewImpl extends VerticalLayout implements Specificati
+             switch (transportType) {
+                 case CAR -> {
+                     Set<Specification> set = event.getValue();
+-
+-                    List<Car> generalListOfCars = new LinkedList<>();
+-                    for (Specification spec : set) {
+-                        List<Car> listOfCars = (List<Car>) presenter.getListOfTransportType(spec.getId(), transportType);
+-                        generalListOfCars.addAll(listOfCars);
+-                    }
+-                    Grid<Car> carGrid = new CarGridCreator().createGrid();
+-                    carGrid.setItems(generalListOfCars);
+-                    saveReport.setHref(carGrid);
++                    setGridMultiselectBehaviorCar(set);
+                 }
+                 case TRUCK -> {
+                     Set<Specification> set = event.getValue();
+-
+-                    List<Truck> generalListOfTrucks = new LinkedList<>();
+-                    for (Specification spec : set) {
+-                        List<Truck> listOfTrucks = (List<Truck>) presenter.getListOfTransportType(spec.getId(), transportType);
+-                        generalListOfTrucks.addAll(listOfTrucks);
+-                    }
+-                    Grid<Truck> truckGrid = new TruckGridCreator().createGrid();
+-                    truckGrid.setItems(generalListOfTrucks);
+-                    saveReport.setHref(truckGrid);
++                    setGridMultiselectBehaviorTruck(set);
++                }
++                case TRAILER -> {
++                    Set<Specification> set = event.getValue();
++                    setGridMultiselectBehaviorTrailer(set);
+                 }
+             }
+         });
+     }
++
++    private void setGridMultiselectBehaviorCar(Set<Specification> set) {
++        List<Car> generalListOfCars = new LinkedList<>();
++        for (Specification spec : set) {
++            List<Car> listOfCars = (List<Car>) presenter.getListOfTransportType(spec.getId(), transportType);
++            generalListOfCars.addAll(listOfCars);
++        }
++        Grid<Car> carGrid = new CarGridCreator().createGrid();
++        carGrid.setItems(generalListOfCars);
++        saveReport.setHref(carGrid);
++    }
++
++    private void setGridMultiselectBehaviorTruck(Set<Specification> set) {
++        List<Truck> generalListOfTrucks = new LinkedList<>();
++        for (Specification spec : set) {
++            List<Truck> listOfTrucks = (List<Truck>) presenter.getListOfTransportType(spec.getId(), transportType);
++            generalListOfTrucks.addAll(listOfTrucks);
++        }
++        Grid<Truck> truckGrid = new TruckGridCreator().createGrid();
++        truckGrid.setItems(generalListOfTrucks);
++        saveReport.setHref(truckGrid);
++    }
++
++    private void setGridMultiselectBehaviorTrailer(Set<Specification> set) {
++        List<Trailer> generalListOfTrailers = new LinkedList<>();
++        for (Specification spec : set) {
++            List<Trailer> listOfTrailers = (List<Trailer>) presenter.getListOfTransportType(spec.getId(), transportType);
++            generalListOfTrailers.addAll(listOfTrailers);
++        }
++        Grid<Trailer> trailerGrid = new TrailerGridCreator().createGrid();
++        trailerGrid.setItems(generalListOfTrailers);
++        saveReport.setHref(trailerGrid);
++    }
+ }
+diff --git a/src/main/java/epts/ui/views/specification/specificationid/SpecificationIdViewImpl.java b/src/main/java/epts/ui/views/specification/specificationid/SpecificationIdViewImpl.java
+index 5eb43d92fc9fcba5d7ec584ce3ec8d5a5bcb1a2e..bf713df352b6c68b619c97ed3e96ce5f63eeafd9 100644
+--- a/src/main/java/epts/ui/views/specification/specificationid/SpecificationIdViewImpl.java
++++ b/src/main/java/epts/ui/views/specification/specificationid/SpecificationIdViewImpl.java
+@@ -12,9 +12,11 @@ import com.vaadin.flow.component.splitlayout.SplitLayout;
+ import com.vaadin.flow.data.provider.CallbackDataProvider;
+ import com.vaadin.flow.router.BeforeEnterEvent;
+ import com.vaadin.flow.router.BeforeEnterObserver;
++
+ import epts.ui.dialogs.specificationid.EptsForAllCreatingDialog;
+ import epts.ui.dialogs.specificationid.EptsForAllCreatingDialogImpl;
+ import epts.ui.dialogs.specificationid.car.EptsForAllCarsCreatingPresenter;
++import epts.ui.dialogs.specificationid.trailer.EptsForAllTrailersCreatingPresenter;
+ import epts.ui.dialogs.specificationid.truck.EptsForAllTrucksCreatingPresenter;
+ import epts.ui.layouts.FilteringLayout;
+ import epts.ui.layouts.ToolsLayout;
+@@ -31,15 +33,18 @@ public abstract class SpecificationIdViewImpl<T> extends VerticalLayout implemen
+     protected final SpecificationIdPresenter<? extends SpecificationIdView, T> presenter;
+     protected final EptsForAllCarsCreatingPresenter eptsForAllCarsCreatingPresenter;
+     protected final EptsForAllTrucksCreatingPresenter eptsForAllTrucksCreatingPresenter;
++    protected final EptsForAllTrailersCreatingPresenter eptsForAllTrailersCreatingPresenter;
+     protected EptsForAllCreatingDialog eptsForAllCreatingDialog;
+ 
+ 
+     public SpecificationIdViewImpl(SpecificationIdPresenter<? extends SpecificationIdView, T> presenter,
+                                    EptsForAllCarsCreatingPresenter eptsForAllCarsCreatingPresenter,
+-                                   EptsForAllTrucksCreatingPresenter eptsForAllTrucksCreatingPresenter) {
++                                   EptsForAllTrucksCreatingPresenter eptsForAllTrucksCreatingPresenter,
++                                   EptsForAllTrailersCreatingPresenter eptsForAllTrailersCreatingPresenter) {
+         this.presenter = presenter;
+         this.eptsForAllCarsCreatingPresenter = eptsForAllCarsCreatingPresenter;
+         this.eptsForAllTrucksCreatingPresenter = eptsForAllTrucksCreatingPresenter;
++        this.eptsForAllTrailersCreatingPresenter = eptsForAllTrailersCreatingPresenter;
+     }
+ 
+     @Override
+@@ -53,10 +58,10 @@ public abstract class SpecificationIdViewImpl<T> extends VerticalLayout implemen
+ 
+         Button createEptsForAll = new Button(getTranslation("tool-buttons.create-all-epts"),
+                 clickEvent -> {
+-                    if (curRoute.equals("transport/car")){
+-                        eptsForAllCreatingDialog = new EptsForAllCreatingDialogImpl(eptsForAllCarsCreatingPresenter);
+-                    } else if (curRoute.equals("transport/truck")){
+-                        eptsForAllCreatingDialog = new EptsForAllCreatingDialogImpl(eptsForAllTrucksCreatingPresenter);
++                    switch (curRoute) {
++                        case "transport/car" -> eptsForAllCreatingDialog = new EptsForAllCreatingDialogImpl(eptsForAllCarsCreatingPresenter);
++                        case "transport/truck" -> eptsForAllCreatingDialog = new EptsForAllCreatingDialogImpl(eptsForAllTrucksCreatingPresenter);
++                        case "transport/trailer" -> eptsForAllCreatingDialog = new EptsForAllCreatingDialogImpl(eptsForAllTrailersCreatingPresenter);
+                     }
+                     eptsForAllCreatingDialog.open(specificationId);
+                 });
+@@ -100,7 +105,7 @@ public abstract class SpecificationIdViewImpl<T> extends VerticalLayout implemen
+ 
+     @Override
+     public void beforeEnter(BeforeEnterEvent beforeEnterEvent) {
+-       curRoute = beforeEnterEvent.getLocation().getPath();
++        curRoute = beforeEnterEvent.getLocation().getPath();
+     }
+ 
+     @Override
+diff --git a/src/main/java/epts/ui/views/specification/specificationid/car/CarSpecificationIdViewImpl.java b/src/main/java/epts/ui/views/specification/specificationid/car/CarSpecificationIdViewImpl.java
+index d65a2c9ab4dbc5f6b2f9ab36b10133bd7558dfb9..22d65de3d15ad80760af9dad1160bcae50d64306 100644
+--- a/src/main/java/epts/ui/views/specification/specificationid/car/CarSpecificationIdViewImpl.java
++++ b/src/main/java/epts/ui/views/specification/specificationid/car/CarSpecificationIdViewImpl.java
+@@ -5,6 +5,7 @@ import com.vaadin.flow.router.*;
+ import com.vaadin.flow.server.auth.AnonymousAllowed;
+ import epts.data.entity.transport.Car;
+ import epts.ui.dialogs.specificationid.car.EptsForAllCarsCreatingPresenter;
++import epts.ui.dialogs.specificationid.trailer.EptsForAllTrailersCreatingPresenter;
+ import epts.ui.dialogs.specificationid.truck.EptsForAllTrucksCreatingPresenter;
+ import epts.ui.layouts.BaseLayout;
+ import epts.ui.layouts.FilteringLayout;
+@@ -37,8 +38,9 @@ public class CarSpecificationIdViewImpl extends SpecificationIdViewImpl<Car> imp
+ 
+     public CarSpecificationIdViewImpl(@Autowired final CarSpecificationIdPresenter presenter,
+                                       @Autowired final EptsForAllTrucksCreatingPresenter eptsForAllTrucksCreatingPresenter,
+-                                      @Autowired final EptsForAllCarsCreatingPresenter eptsForAllCarsCreatingPresenter) {
+-        super(presenter, eptsForAllCarsCreatingPresenter, eptsForAllTrucksCreatingPresenter);
++                                      @Autowired final EptsForAllCarsCreatingPresenter eptsForAllCarsCreatingPresenter,
++                                      @Autowired final EptsForAllTrailersCreatingPresenter eptsForAllTrailersCreatingPresenter) {
++        super(presenter, eptsForAllCarsCreatingPresenter, eptsForAllTrucksCreatingPresenter, eptsForAllTrailersCreatingPresenter);
+         presenter.onAttach(this);
+     }
+ 
+diff --git a/src/main/java/epts/ui/views/specification/specificationid/trailer/TrailerSpecificationIdPresenter.java b/src/main/java/epts/ui/views/specification/specificationid/trailer/TrailerSpecificationIdPresenter.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..727551899f5335a088448c1173d086db9cd15b75
+--- /dev/null
++++ b/src/main/java/epts/ui/views/specification/specificationid/trailer/TrailerSpecificationIdPresenter.java
+@@ -0,0 +1,40 @@
++package epts.ui.views.specification.specificationid.trailer;
++
++import java.util.HashMap;
++import java.util.stream.Stream;
++
++import org.springframework.beans.factory.annotation.Autowired;
++
++import com.vaadin.flow.spring.annotation.RouteScope;
++import com.vaadin.flow.spring.annotation.SpringComponent;
++
++import epts.data.entity.transport.Trailer;
++import epts.data.service.transport.TrailerService;
++import epts.ui.views.specification.specificationid.SpecificationIdPresenter;
++
++@SpringComponent
++@RouteScope
++public class TrailerSpecificationIdPresenter extends SpecificationIdPresenter<TrailerSpecificationIdView, Trailer> {
++
++    private final TrailerService trailerService;
++
++    public TrailerSpecificationIdPresenter(@Autowired TrailerService trailerService) {
++        super();
++        this.trailerService = trailerService;
++    }
++
++    @Override
++    public void loadVehicles(long specificationId) {
++        view.setCallbackDataProvider(query -> trailerService.getTrailersForSpecification(specificationId, query.getPage(), query.getPageSize()));
++    }
++
++    @Override
++    public Stream<Trailer> handleFilteringClick(long specificationId, HashMap<String, String> filterValueByFieldName, int page, int pageSize) {
++        return trailerService.getTrailersForSpecificationByFilters(specificationId, filterValueByFieldName, page, pageSize);
++    }
++
++    @Override
++    public void createEptsForAll() {
++        // TODO: этого нет ни здесь, ни в Truck.
++    }
++}
+diff --git a/src/main/java/epts/ui/views/specification/specificationid/trailer/TrailerSpecificationIdView.java b/src/main/java/epts/ui/views/specification/specificationid/trailer/TrailerSpecificationIdView.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..8c8a147a2606a86f0f1d348af7e25b55feb3a40d
+--- /dev/null
++++ b/src/main/java/epts/ui/views/specification/specificationid/trailer/TrailerSpecificationIdView.java
+@@ -0,0 +1,7 @@
++package epts.ui.views.specification.specificationid.trailer;
++
++import epts.data.entity.transport.Trailer;
++import epts.ui.views.specification.specificationid.SpecificationIdView;
++
++public interface TrailerSpecificationIdView extends SpecificationIdView<Trailer> {
++}
+diff --git a/src/main/java/epts/ui/views/specification/specificationid/trailer/TrailerSpecificationIdViewImpl.java b/src/main/java/epts/ui/views/specification/specificationid/trailer/TrailerSpecificationIdViewImpl.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..aeb0c2c19b2748cb3aedd593ac9df18a00ee990e
+--- /dev/null
++++ b/src/main/java/epts/ui/views/specification/specificationid/trailer/TrailerSpecificationIdViewImpl.java
+@@ -0,0 +1,53 @@
++package epts.ui.views.specification.specificationid.trailer;
++
++import javax.annotation.PostConstruct;
++
++import org.springframework.beans.factory.annotation.Autowired;
++
++import com.vaadin.flow.router.BeforeEnterEvent;
++import com.vaadin.flow.router.BeforeEnterObserver;
++import com.vaadin.flow.router.Location;
++
++import epts.data.entity.transport.Trailer;
++import epts.ui.dialogs.specificationid.EptsForAllCreatingPresenter;
++import epts.ui.dialogs.specificationid.car.EptsForAllCarsCreatingPresenter;
++import epts.ui.dialogs.specificationid.trailer.EptsForAllTrailersCreatingPresenter;
++import epts.ui.dialogs.specificationid.truck.EptsForAllTrucksCreatingPresenter;
++import epts.ui.utils.Navigator;
++import epts.ui.utils.gridcreators.TrailerGridCreator;
++import epts.ui.views.specification.specificationid.SpecificationIdViewImpl;
++
++public class TrailerSpecificationIdViewImpl extends SpecificationIdViewImpl<Trailer> implements TrailerSpecificationIdView, BeforeEnterObserver {
++
++    public TrailerSpecificationIdViewImpl(@Autowired final TrailerSpecificationIdPresenter presenter,
++                                          @Autowired EptsForAllCarsCreatingPresenter eptsForAllCarsCreatingPresenter,
++                                          @Autowired EptsForAllTrucksCreatingPresenter eptsForAllTrucksCreatingPresenter,
++                                          @Autowired EptsForAllTrailersCreatingPresenter eptsForAllTrailersCreatingPresenter) {
++        super(presenter, eptsForAllCarsCreatingPresenter, eptsForAllTrucksCreatingPresenter, eptsForAllTrailersCreatingPresenter);
++        presenter.onAttach(this);
++    }
++
++    @Override
++    @PostConstruct
++    public void init() {
++        grid = new TrailerGridCreator().createGrid();
++        selectedItemsGrid = new TrailerGridCreator().createGrid();
++        super.init();
++    }
++
++    @Override
++    public void beforeEnter(BeforeEnterEvent beforeEnterEvent) {
++        Location curLocation = beforeEnterEvent.getLocation();
++        goBack.addClickListener(buttonClickEvent -> Navigator.navigateToPrevLocation(curLocation));
++        specificationId = Long.parseLong(
++                beforeEnterEvent.getRouteParameters().get("specificationID").orElse("0")
++        );
++
++        String curRoute = beforeEnterEvent.getLocation().getPath();
++        grid.addItemClickListener(listener -> {
++            if (listener.getClickCount() == 2) {
++                Navigator.navigate(curRoute + "/" + listener.getItem().getId());
++            }
++        });
++    }
++}
+diff --git a/src/main/java/epts/ui/views/specification/specificationid/truck/TruckSpecificationIdViewImpl.java b/src/main/java/epts/ui/views/specification/specificationid/truck/TruckSpecificationIdViewImpl.java
+index 10ed1d8357c0c0beb3779e003f78bc1c9196a5c2..44abfd18730a04a14d14ead8fae6fac079758be8 100644
+--- a/src/main/java/epts/ui/views/specification/specificationid/truck/TruckSpecificationIdViewImpl.java
++++ b/src/main/java/epts/ui/views/specification/specificationid/truck/TruckSpecificationIdViewImpl.java
+@@ -4,6 +4,7 @@ import com.vaadin.flow.router.*;
+ import com.vaadin.flow.server.auth.AnonymousAllowed;
+ import epts.data.entity.transport.Truck;
+ import epts.ui.dialogs.specificationid.car.EptsForAllCarsCreatingPresenter;
++import epts.ui.dialogs.specificationid.trailer.EptsForAllTrailersCreatingPresenter;
+ import epts.ui.dialogs.specificationid.truck.EptsForAllTrucksCreatingPresenter;
+ import epts.ui.layouts.BaseLayout;
+ import epts.ui.utils.Navigator;
+@@ -20,8 +21,9 @@ public class TruckSpecificationIdViewImpl extends SpecificationIdViewImpl<Truck>
+ 
+     public TruckSpecificationIdViewImpl(@Autowired final TruckSpecificationIdPresenter presenter,
+                                         @Autowired final EptsForAllTrucksCreatingPresenter eptsForAllTrucksCreatingPresenter,
+-                                        @Autowired final EptsForAllCarsCreatingPresenter eptsForAllCarsCreatingPresenter) {
+-        super(presenter, eptsForAllCarsCreatingPresenter, eptsForAllTrucksCreatingPresenter);
++                                        @Autowired final EptsForAllCarsCreatingPresenter eptsForAllCarsCreatingPresenter,
++                                        @Autowired final EptsForAllTrailersCreatingPresenter eptsForAllTrailersCreatingPresenter) {
++        super(presenter, eptsForAllCarsCreatingPresenter, eptsForAllTrucksCreatingPresenter, eptsForAllTrailersCreatingPresenter);
+         presenter.onAttach(this);
+     }
+ 

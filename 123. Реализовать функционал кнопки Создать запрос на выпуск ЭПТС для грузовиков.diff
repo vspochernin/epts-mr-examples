@@ -1,0 +1,457 @@
+diff --git a/src/main/java/epts/data/service/api/ElptsService.java b/src/main/java/epts/data/service/api/ElptsService.java
+index 71c2f8e7b6b13f8dd60b6c8299c05d533f0d370b..f3d570454adb256ae569e7402b7d5957cfd519ef 100644
+--- a/src/main/java/epts/data/service/api/ElptsService.java
++++ b/src/main/java/epts/data/service/api/ElptsService.java
+@@ -78,8 +78,6 @@ public class ElptsService {
+         request.setStatus("signed");
+         request.setRequestXml(signedXml);
+ 
+-        requestRepository.save(request);
+-
+         String xmlResponse = getXmlResponse(sandboxUri, signedXml);
+         Document document;
+ 
+diff --git a/src/main/java/epts/ui/dialogs/specificationid/car/EptsForAllCarsCreatingPresenter.java b/src/main/java/epts/ui/dialogs/specificationid/car/EptsForAllCarsCreatingPresenter.java
+index 1037ad121685364b6063e33aedfd75cf802c5b78..c2070e951a2c9fa7e23588b5043495c9e0267328 100644
+--- a/src/main/java/epts/ui/dialogs/specificationid/car/EptsForAllCarsCreatingPresenter.java
++++ b/src/main/java/epts/ui/dialogs/specificationid/car/EptsForAllCarsCreatingPresenter.java
+@@ -50,6 +50,8 @@ public class EptsForAllCarsCreatingPresenter extends EptsForAllCreatingPresenter
+         for (Car filledCar : filledOfEpts) {
+             try {
+                 elptsService.sendXmlRequest(filledCar);
++                filledCar.getEpts().getGenericEpts().setStatus("Запрошен");
++                genericEptsService.update(filledCar.getEpts().getGenericEpts());
+                 view.showNotification("ЭПТС отправлены!", NotificationVariant.LUMO_SUCCESS);
+             } catch (Exception e) {
+                 e.printStackTrace();
+diff --git a/src/main/java/epts/ui/dialogs/specificationid/truck/EptsForAllTrucksCreatingPresenter.java b/src/main/java/epts/ui/dialogs/specificationid/truck/EptsForAllTrucksCreatingPresenter.java
+index 1b1f76c5942177b41fb81701ace15eb6fa2c46b4..2fd0129b9b7f6d126a2cb289a394a96acc217f51 100644
+--- a/src/main/java/epts/ui/dialogs/specificationid/truck/EptsForAllTrucksCreatingPresenter.java
++++ b/src/main/java/epts/ui/dialogs/specificationid/truck/EptsForAllTrucksCreatingPresenter.java
+@@ -50,7 +50,8 @@ public class EptsForAllTrucksCreatingPresenter extends EptsForAllCreatingPresent
+         for (Truck filledTruck : filledOfEpts) {
+             try{
+                 sendRequest(filledTruck);
+-                filledTruck.getEpts().getGenericEpts().setStatus("Выпущен");
++                filledTruck.getEpts().getGenericEpts().setStatus("Запрошен");
++                genericEptsService.update(filledTruck.getEpts().getGenericEpts());
+                 view.showNotification("ЭПТС отправлены!", NotificationVariant.LUMO_SUCCESS);
+             }catch (Exception e){
+                 e.printStackTrace();
+@@ -129,15 +130,12 @@ public class EptsForAllTrucksCreatingPresenter extends EptsForAllCreatingPresent
+         return productionEpts;
+     }
+ 
++    // Test later.
+     private void sendRequest(Truck truck){
+         GenericEpts genericEpts = truck.getEpts().getGenericEpts();
+         long genericEptsId = genericEpts.getId();
+         elptsService.sendXml(genericEptsId);
+         view.showNotification("Запрос на выпуск ЭПТС создан успешно!", NotificationVariant.LUMO_SUCCESS);
+-
+-        genericEpts = truckService.get(truck.getId()).orElseThrow().getEpts().getGenericEpts();
+-        long createRequestId = genericEpts.getCreateRequestId();
+-        elptsService.sendPoll(createRequestId);
+     }
+ 
+ }
+diff --git a/src/main/java/epts/ui/views/epts/car/CarEptsViewImpl.java b/src/main/java/epts/ui/views/epts/car/CarEptsViewImpl.java
+index 9b1b0d6b68c2661ba04ad789470f64e739f67454..a1365a3f6fb594d130b54423ef3c2381db032b9b 100644
+--- a/src/main/java/epts/ui/views/epts/car/CarEptsViewImpl.java
++++ b/src/main/java/epts/ui/views/epts/car/CarEptsViewImpl.java
+@@ -19,9 +19,7 @@ import javax.annotation.PostConstruct;
+ 
+ @PageTitle("Транспорт/ID Автомобиля")
+ @Route(value = "transport/car/:transportID", layout = BaseLayout.class)
+-@RouteAlias(value = "transport/truck/:transportID", layout = BaseLayout.class)
+ @RouteAlias(value = "specification/car/:specificationID/:transportID", layout = BaseLayout.class)
+-@RouteAlias(value = "specification/truck/:specificationID/:transportID", layout = BaseLayout.class)
+ @AnonymousAllowed
+ public class CarEptsViewImpl extends EptsViewImpl<Car> implements CarEptsView {
+     TextField vin, mark, model, category, categoryTrts, engineNumber, chassisNumber, bodyNumber,
+diff --git a/src/main/java/epts/ui/views/epts/truck/TruckEptsPresenter.java b/src/main/java/epts/ui/views/epts/truck/TruckEptsPresenter.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..bb5c891ff79e564dba79f2a04dc418e688c7ad89
+--- /dev/null
++++ b/src/main/java/epts/ui/views/epts/truck/TruckEptsPresenter.java
+@@ -0,0 +1,55 @@
++package epts.ui.views.epts.truck;
++
++import java.util.Optional;
++
++import org.springframework.beans.factory.annotation.Autowired;
++
++import com.vaadin.flow.component.notification.NotificationVariant;
++import com.vaadin.flow.spring.annotation.RouteScope;
++import com.vaadin.flow.spring.annotation.SpringComponent;
++
++import epts.data.entity.epts.GenericEpts;
++import epts.data.entity.transport.Truck;
++import epts.data.service.api.ElptsService;
++import epts.data.service.transport.TruckService;
++import epts.ui.views.epts.EptsPresenter;
++import lombok.Getter;
++
++@SpringComponent
++@RouteScope
++public class TruckEptsPresenter extends EptsPresenter<TruckEptsView, Truck> {
++
++    @Getter
++    private TruckService truckService;
++    private ElptsService elptsService;
++
++    public TruckEptsPresenter(@Autowired TruckService truckService,
++                              @Autowired ElptsService elptsService) {
++        super(elptsService);
++        this.truckService = truckService;
++        this.elptsService = elptsService;
++    }
++
++    // TODO: test later.
++    @Override
++    public void handleReleaseConfirmCLick() {
++        Truck truck = truckService.get(getTransportId()).orElseThrow();
++        GenericEpts genericEpts = truck.getEpts().getGenericEpts();
++        long id = genericEpts.getId();
++        elptsService.sendXml(id);
++        view.showNotification("Запрос на выпуск ЭПТС создан успешно!", NotificationVariant.LUMO_SUCCESS);
++    }
++
++    @Override
++    public void handleGetReleaseEptsStatusClick() {
++        Truck truck = truckService.get(getTransportId()).orElseThrow();
++        GenericEpts genericEpts = truckService.get(truck.getId()).orElseThrow().getEpts().getGenericEpts();
++        Long createRequestId = genericEpts.getCreateRequestId();
++        if (createRequestId == null) {
++            view.showNotification("Запрос на выпуск ЭПТС не существует!", NotificationVariant.LUMO_ERROR);
++            return;
++        }
++        elptsService.sendPoll(createRequestId);
++        view.showNotification("Запрос на проверку статуса отправлен успешно!", NotificationVariant.LUMO_SUCCESS);
++    }
++}
+diff --git a/src/main/java/epts/ui/views/epts/truck/TruckEptsView.java b/src/main/java/epts/ui/views/epts/truck/TruckEptsView.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..8dd7fae7326fa641d73153f6a5d5a72836fea5e6
+--- /dev/null
++++ b/src/main/java/epts/ui/views/epts/truck/TruckEptsView.java
+@@ -0,0 +1,7 @@
++package epts.ui.views.epts.truck;
++
++import epts.data.entity.transport.Truck;
++import epts.ui.views.epts.EptsView;
++
++public interface TruckEptsView extends EptsView<Truck> {
++}
+diff --git a/src/main/java/epts/ui/views/epts/truck/TruckEptsViewImpl.java b/src/main/java/epts/ui/views/epts/truck/TruckEptsViewImpl.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..6ee8ef9f138d92f1b9da76e9cf3bcc9674e95b2c
+--- /dev/null
++++ b/src/main/java/epts/ui/views/epts/truck/TruckEptsViewImpl.java
+@@ -0,0 +1,177 @@
++package epts.ui.views.epts.truck;
++
++import javax.annotation.PostConstruct;
++
++import org.springframework.beans.factory.annotation.Autowired;
++
++import com.vaadin.flow.component.formlayout.FormLayout;
++import com.vaadin.flow.component.orderedlayout.VerticalLayout;
++import com.vaadin.flow.component.textfield.IntegerField;
++import com.vaadin.flow.component.textfield.TextField;
++import com.vaadin.flow.data.binder.Binder;
++import com.vaadin.flow.router.PageTitle;
++import com.vaadin.flow.router.Route;
++import com.vaadin.flow.router.RouteAlias;
++import com.vaadin.flow.server.auth.AnonymousAllowed;
++
++import epts.data.entity.transport.Truck;
++import epts.ui.layouts.BaseLayout;
++import epts.ui.utils.Validator;
++import epts.ui.views.epts.EptsViewImpl;
++
++@PageTitle("Транспорт/ID Грузовика")
++@Route(value = "transport/truck/:transportID", layout = BaseLayout.class)
++@RouteAlias(value = "specification/truck/:specificationID/:transportID", layout = BaseLayout.class)
++@AnonymousAllowed
++public class TruckEptsViewImpl extends EptsViewImpl<Truck> implements TruckEptsView {
++    TextField vin, model, category, categoryTrts, engineNumber, chassisNumber, bodyNumber,
++            bodyColor, ice, volumeOfCylinders,
++            organizationName, modification, colorShade, drawingWheels, transmission,
++            fuelType, idInfo, organizationInfo;
++    IntegerField productionYear, maxPower, maxWeight, weight;
++
++    public TruckEptsViewImpl(@Autowired final TruckEptsPresenter presenter) {
++        super(presenter);
++        presenter.onAttach(this);
++        this.binder = new Binder<>();
++    }
++
++    @Override
++    @PostConstruct
++    public void init() {
++        formLayoutDiv = new VerticalLayout();
++
++        vin = new TextField(getTranslation("text-field.vin"));
++        model = new TextField(getTranslation("text-field.model"));
++        category = new TextField(getTranslation("text-field.category"));
++        categoryTrts = new TextField(getTranslation("text-field.categoryTrts"));
++        engineNumber = new TextField(getTranslation("text-field.engineNumber"));
++        chassisNumber = new TextField(getTranslation("text-field.chassisNumber"));
++        bodyNumber = new TextField(getTranslation("text-field.bodyNumber"));
++        bodyColor = new TextField(getTranslation("text-field.bodyColor"));
++        productionYear = new IntegerField(getTranslation("text-field.productionYear"));
++        ice = new TextField(getTranslation("text-field.ice"));
++        volumeOfCylinders = new TextField(getTranslation("text-field.volumeOfCylinders"));
++        maxPower = new IntegerField(getTranslation("text-field.maxPower"));
++        maxWeight = new IntegerField(getTranslation("text-field.maxWeight"));
++        organizationName = new TextField(getTranslation("text-field.organizationName"));
++        modification = new TextField(getTranslation("text-field.modification"));
++        colorShade = new TextField(getTranslation("text-field.colorShade"));
++        weight = new IntegerField(getTranslation("text-field.weight"));
++        drawingWheels = new TextField(getTranslation("text-field.drawingWheels"));
++        transmission = new TextField(getTranslation("text-field.transmission"));
++        fuelType = new TextField(getTranslation("text-field.fuelType"));
++        idInfo = new TextField(getTranslation("text-field.idInfo"));
++        organizationInfo = new TextField(getTranslation("text-field.organizationInfo"));
++
++        FormLayout formLayout = new FormLayout();
++        formLayout.setHeight("auto");
++        formLayout.getStyle().set("margin-right", "15px");
++        formLayout.getStyle().set("margin-left", "15px");
++        formLayout.getStyle().set("margin-bottom", "15px");
++
++        formLayout.add(
++                vin,
++                model,
++                category,
++                categoryTrts,
++                engineNumber,
++                chassisNumber,
++                bodyNumber,
++                bodyColor,
++                productionYear,
++                ice,
++                volumeOfCylinders,
++                maxPower,
++                maxWeight,
++                organizationName,
++                modification,
++                colorShade,
++                weight,
++                drawingWheels,
++                transmission,
++                fuelType,
++                idInfo,
++                organizationInfo
++        );
++
++        formLayoutDiv.add(formLayout);
++        bind();
++        super.init();
++    }
++
++    public void bind() {
++        binder.forField(vin)
++                .withValidator(Validator.getEmptyStringValidator(), getTranslation("validation-message.fill-field"))
++                .bind(Truck::getVin, Truck::setVin);
++        // TODO: удалил mark.
++        binder.forField(model)
++                .withValidator(Validator.getEmptyStringValidator(), getTranslation("validation-message.fill-field"))
++                .bind(Truck::getModel, Truck::setModel);
++        binder.forField(category)
++                .withValidator(Validator.getEmptyStringValidator(), getTranslation("validation-message.fill-field"))
++                .bind(Truck::getVin, Truck::setVin); // TODO: этого нет в значении полей, Vin?
++        binder.forField(categoryTrts)
++                .withValidator(Validator.getEmptyStringValidator(), getTranslation("validation-message.fill-field"))
++                .bind(Truck::getVin, Truck::setVin); // TODO: этого нет в значении полей, Vin?
++        binder.forField(engineNumber)
++                .withValidator(Validator.getEmptyStringValidator(), getTranslation("validation-message.fill-field"))
++                .bind(Truck::getEngineNumber, Truck::setEngineNumber);
++        binder.forField(chassisNumber)
++                .withValidator(Validator.getEmptyStringValidator(), getTranslation("validation-message.fill-field"))
++                .bind(Truck::getChassisNumber, Truck::setChassisNumber);
++        binder.forField(bodyNumber)
++                .withValidator(Validator.getEmptyStringValidator(), getTranslation("validation-message.fill-field"))
++                .bind(Truck::getCabNumber, Truck::setCabNumber);
++        binder.forField(bodyColor)
++                .withValidator(Validator.getEmptyStringValidator(), getTranslation("validation-message.fill-field"))
++                .bind(Truck::getColor, Truck::setColor);
++        binder.forField(productionYear)
++                .withValidator(Validator.getEmptyIntegerValidator(), getTranslation("validation-message.fill-field"))
++                .withValidator(Validator.getYearValidator(), getTranslation("validation-message.year"))
++                .bind(Truck::getProductionYear, Truck::setProductionYear);
++        binder.forField(ice) // TODO: Почему "ice"?
++                .withValidator(Validator.getEmptyStringValidator(), getTranslation("validation-message.fill-field"))
++                .bind(Truck::getEngineModel, Truck::setEngineModel);
++        binder.forField(volumeOfCylinders) // TODO: этого нет в значении полей, Vin?
++                .withValidator(Validator.getEmptyStringValidator(), getTranslation("validation-message.fill-field"))
++                .bind(Truck::getVin, Truck::setVin);
++        binder.forField(maxPower)
++                .withValidator(Validator.getEmptyIntegerValidator(), getTranslation("validation-message.fill-field"))
++                .withValidator(Validator.getPositiveIntegerValidator(), getTranslation("validation-message.pos-num"))
++                .bind(Truck::getEnginePower, Truck::setEnginePower);
++        // TODO: удалил ecoClass.
++        binder.forField(maxWeight)
++                .withValidator(Validator.getEmptyIntegerValidator(), getTranslation("validation-message.fill-field"))
++                .withValidator(Validator.getPositiveIntegerValidator(), getTranslation("validation-message.pos-num"))
++                .bind(Truck::getMaxWeight, Truck::setMaxWeight);
++        binder.forField(organizationName)
++                .withValidator(Validator.getEmptyStringValidator(), getTranslation("validation-message.fill-field"))
++                .bind(Truck::getVin, Truck::setVin); // TODO: этого нет в значении полей, Vin?
++        binder.forField(modification)
++                .withValidator(Validator.getEmptyStringValidator(), getTranslation("validation-message.fill-field"))
++                .bind(Truck::getVin, Truck::setVin); // TODO: этого нет в значении полей, Vin?
++        binder.forField(colorShade)
++                .withValidator(Validator.getEmptyStringValidator(), getTranslation("validation-message.fill-field"))
++                .bind(Truck::getVin, Truck::setVin); // TODO: этого нет в значении полей, Vin?
++        binder.forField(weight)
++                .withValidator(Validator.getEmptyIntegerValidator(), getTranslation("validation-message.fill-field"))
++                .withValidator(Validator.getPositiveIntegerValidator(), getTranslation("validation-message.pos-num"))
++                .bind(Truck::getWeight, Truck::setWeight);
++        binder.forField(drawingWheels)
++                .withValidator(Validator.getEmptyStringValidator(), getTranslation("validation-message.fill-field"))
++                .bind(Truck::getDrivingWheels, Truck::setDrivingWheels);
++        binder.forField(transmission)
++                .withValidator(Validator.getEmptyStringValidator(), getTranslation("validation-message.fill-field"))
++                .bind(Truck::getTransmission, Truck::setTransmission);
++        binder.forField(fuelType)
++                .withValidator(Validator.getEmptyStringValidator(), getTranslation("validation-message.fill-field"))
++                .bind(Truck::getVin, Truck::setVin); // TODO: этого нет в значении полей, Vin?
++        binder.forField(idInfo)
++                .withValidator(Validator.getEmptyStringValidator(), getTranslation("validation-message.fill-field"))
++                .bind(Truck::getVin, Truck::setVin); // TODO: этого нет в значении полей, Vin?
++        binder.forField(organizationInfo)
++                .withValidator(Validator.getEmptyStringValidator(), getTranslation("validation-message.fill-field"))
++                .bind(Truck::getVin, Truck::setVin); // TODO: этого нет в значении полей, Vin?
++    }
++}
+diff --git a/src/main/java/epts/ui/views/specification/specificationid/SpecificationIdViewImpl.java b/src/main/java/epts/ui/views/specification/specificationid/SpecificationIdViewImpl.java
+index 6c88c493742b4c80284e0ace015673d93f408465..83400df2f052092d9f01ea554cb06f58b099b5fe 100644
+--- a/src/main/java/epts/ui/views/specification/specificationid/SpecificationIdViewImpl.java
++++ b/src/main/java/epts/ui/views/specification/specificationid/SpecificationIdViewImpl.java
+@@ -59,10 +59,14 @@ public abstract class SpecificationIdViewImpl<T> extends VerticalLayout implemen
+ 
+         Button createEptsForAll = new Button(getTranslation("tool-buttons.create-all-epts"),
+                 clickEvent -> {
+-                    switch (curRoute) {
+-                        case "transport/car" -> eptsForAllCreatingDialog = new EptsForAllCreatingDialogImpl(eptsForAllCarsCreatingPresenter);
+-                        case "transport/truck" -> eptsForAllCreatingDialog = new EptsForAllCreatingDialogImpl(eptsForAllTrucksCreatingPresenter);
+-                        case "transport/trailer" -> eptsForAllCreatingDialog = new EptsForAllCreatingDialogImpl(eptsForAllTrailersCreatingPresenter);
++                    if (curRoute.contains("specification/car")) {
++                        eptsForAllCreatingDialog = new EptsForAllCreatingDialogImpl(eptsForAllCarsCreatingPresenter);
++                    }
++                    if (curRoute.contains("specification/truck")) {
++                        eptsForAllCreatingDialog = new EptsForAllCreatingDialogImpl(eptsForAllTrucksCreatingPresenter);
++                    }
++                    if (curRoute.contains("specification/trailer")) {
++                        eptsForAllCreatingDialog = new EptsForAllCreatingDialogImpl(eptsForAllTrailersCreatingPresenter);
+                     }
+                     eptsForAllCreatingDialog.open(specificationId);
+                 });
+@@ -88,7 +92,7 @@ public abstract class SpecificationIdViewImpl<T> extends VerticalLayout implemen
+         goBack.getStyle().set("background-color", "#FFFFFF");
+         goBack.setText("Назад");
+ 
+-        Component[] components = {saveReport, requestStatus, columnSetting};
++        Component[] components = {saveReport, requestStatus, createEptsForAll, columnSetting};
+         ToolsLayout toolsLayout = new ToolsLayout(goBack);
+         toolsLayout.add(createEptsForAll);
+         toolsLayout.add(components);
+diff --git a/src/main/java/epts/ui/views/specification/specificationid/car/CarSpecificationIdViewImpl.java b/src/main/java/epts/ui/views/specification/specificationid/car/CarSpecificationIdViewImpl.java
+index 22d65de3d15ad80760af9dad1160bcae50d64306..9aa5e4803a80c7914b0882c3fb6e86e042c70d4e 100644
+--- a/src/main/java/epts/ui/views/specification/specificationid/car/CarSpecificationIdViewImpl.java
++++ b/src/main/java/epts/ui/views/specification/specificationid/car/CarSpecificationIdViewImpl.java
+@@ -66,6 +66,7 @@ public class CarSpecificationIdViewImpl extends SpecificationIdViewImpl<Car> imp
+ 
+     @Override
+     public void beforeEnter(BeforeEnterEvent beforeEnterEvent) {
++        super.beforeEnter(beforeEnterEvent);
+         Location curLocation = beforeEnterEvent.getLocation();
+         goBack.addClickListener(buttonClickEvent -> Navigator.navigateToPrevLocation(curLocation));
+         specificationId = Long.parseLong(
+diff --git a/src/main/java/epts/ui/views/specification/specificationid/trailer/TrailerSpecificationIdViewImpl.java b/src/main/java/epts/ui/views/specification/specificationid/trailer/TrailerSpecificationIdViewImpl.java
+index 4264590163788fb5561cb2671ec60f6d10cc03bd..d15027c5ca9eac08b0d1366b93bf79c4bf47fdda 100644
+--- a/src/main/java/epts/ui/views/specification/specificationid/trailer/TrailerSpecificationIdViewImpl.java
++++ b/src/main/java/epts/ui/views/specification/specificationid/trailer/TrailerSpecificationIdViewImpl.java
+@@ -39,6 +39,7 @@ public class TrailerSpecificationIdViewImpl extends SpecificationIdViewImpl<Trai
+ 
+     @Override
+     public void beforeEnter(BeforeEnterEvent beforeEnterEvent) {
++        super.beforeEnter(beforeEnterEvent);
+         Location curLocation = beforeEnterEvent.getLocation();
+         goBack.addClickListener(buttonClickEvent -> Navigator.navigateToPrevLocation(curLocation));
+         specificationId = Long.parseLong(
+diff --git a/src/main/java/epts/ui/views/specification/specificationid/truck/TruckSpecificationIdPresenter.java b/src/main/java/epts/ui/views/specification/specificationid/truck/TruckSpecificationIdPresenter.java
+index 8b76fef8b1426437be3021db07bc38699e53813b..7e1324b30c261f89bf2f45f4674d4ef201b26c0e 100644
+--- a/src/main/java/epts/ui/views/specification/specificationid/truck/TruckSpecificationIdPresenter.java
++++ b/src/main/java/epts/ui/views/specification/specificationid/truck/TruckSpecificationIdPresenter.java
+@@ -1,22 +1,31 @@
+ package epts.ui.views.specification.specificationid.truck;
+ 
++import com.vaadin.flow.component.notification.NotificationVariant;
+ import com.vaadin.flow.spring.annotation.RouteScope;
+ import com.vaadin.flow.spring.annotation.SpringComponent;
++
++import epts.data.entity.epts.GenericEpts;
+ import epts.data.entity.transport.Truck;
++import epts.data.service.api.ElptsService;
+ import epts.data.service.transport.TruckService;
+ import epts.ui.views.specification.specificationid.SpecificationIdPresenter;
+ import org.springframework.beans.factory.annotation.Autowired;
+ 
+ import java.util.HashMap;
++import java.util.List;
+ import java.util.stream.Stream;
+ 
+ @SpringComponent
+ @RouteScope
+ public class TruckSpecificationIdPresenter extends SpecificationIdPresenter<TruckSpecificationIdView, Truck> {
+     private final TruckService truckService;
+-    public TruckSpecificationIdPresenter(@Autowired TruckService truckService) {
++    private final ElptsService elptsService;
++
++    public TruckSpecificationIdPresenter(@Autowired TruckService truckService,
++                                         @Autowired ElptsService elptsService) {
+         super();
+         this.truckService = truckService;
++        this.elptsService = elptsService;
+     }
+ 
+     @Override
+@@ -36,6 +45,23 @@ public class TruckSpecificationIdPresenter extends SpecificationIdPresenter<Truc
+ 
+     @Override
+     public void eptsStatusForAll(long specificationId) {
++        List<Truck> trucks = truckService.getTrucksForSpecification(specificationId);
++        for (Truck truck : trucks) {
++            if (truck.getEpts() != null && truck.getEpts().getGenericEpts() != null &&
++                    truck.getEpts().getGenericEpts().getStatus().equals("Запрошен")) {
++                sendStatusRequest(truck);
++            }
++        }
++    }
+ 
++    private void sendStatusRequest(Truck truck) {
++        GenericEpts genericEpts = truckService.get(truck.getId()).orElseThrow().getEpts().getGenericEpts();
++        Long createRequestId = genericEpts.getCreateRequestId();
++        if (createRequestId == null) {
++            view.showNotification("Запрос на выпуск ЭПТС не существует!", NotificationVariant.LUMO_ERROR);
++            return;
++        }
++        elptsService.sendPoll(createRequestId);
++        view.showNotification("Запрос на проверку статуса отправлен успешно!", NotificationVariant.LUMO_SUCCESS);
+     }
+ }
+diff --git a/src/main/java/epts/ui/views/specification/specificationid/truck/TruckSpecificationIdViewImpl.java b/src/main/java/epts/ui/views/specification/specificationid/truck/TruckSpecificationIdViewImpl.java
+index 9937681f8aa40f3888f5836dfef052a1a264af17..361fc99b6d46fbb43898c8a6f6ed9bff24b7cfc6 100644
+--- a/src/main/java/epts/ui/views/specification/specificationid/truck/TruckSpecificationIdViewImpl.java
++++ b/src/main/java/epts/ui/views/specification/specificationid/truck/TruckSpecificationIdViewImpl.java
+@@ -37,6 +37,7 @@ public class TruckSpecificationIdViewImpl extends SpecificationIdViewImpl<Truck>
+ 
+     @Override
+     public void beforeEnter(BeforeEnterEvent beforeEnterEvent) {
++        super.beforeEnter(beforeEnterEvent);
+         Location curLocation = beforeEnterEvent.getLocation();
+         goBack.addClickListener(buttonClickEvent -> Navigator.navigateToPrevLocation(curLocation));
+         specificationId = Long.parseLong(
